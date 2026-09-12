@@ -8,7 +8,7 @@ readme = "README.md"
 documentation = "https://docs.rs/chirrp"
 keywords = ["audio", "procedural", "sound-effects", "gamedev", "bevy"]
 categories = ["multimedia::audio", "game-development"]
-include = ["/src/**", "/examples/**", "/tests/**", "/references/**", "/docs/**", "/wasm/tools.js", "/wasm/package.json", "/scripts/**", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE", "/Cargo.toml", "/Cargo.lock"]
+include = ["/src/**", "/examples/*.rs", "/.agents/skills/**", "/tests/**", "/references/**", "/docs/**", "/wasm/*.js", "/wasm/index.html", "/wasm/package.json", "/scripts/**", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE", "/Cargo.toml", "/Cargo.lock"]
 repository = "https://github.com/steven-moss-notebook/Chirrp"
 
 [package.metadata.docs.rs]
@@ -19,7 +19,14 @@ crate-type = ["rlib", "cdylib"]
 
 [features]
 default = []
+# Opt in to the standalone server: cargo install chirrp --features mcp --bin chirrp-mcp
+mcp = ["dep:rmcp", "dep:tokio", "dep:tokio-util", "dep:futures-util", "dep:axum", "dep:uuid"]
 bevy = ["dep:bevy_app", "dep:bevy_ecs"]
+
+[[bin]]
+name = "chirrp-mcp"
+path = "src/bin/chirrp-mcp.rs"
+required-features = ["mcp"]
 
 [[example]]
 name = "headless"
@@ -36,6 +43,16 @@ rand = { version = "0.9", default-features = false, features = ["std"] }
 rand_chacha = "0.9"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+
+# Used only by the opt-in native MCP binary, never by src/lib.rs.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+rmcp = { version = "3.3.0", default-features = false, features = ["server", "transport-io", "transport-streamable-http-server"], optional = true }
+tokio = { version = "1", default-features = false, features = ["macros", "rt", "signal", "sync", "time", "net"], optional = true }
+tokio-util = { version = "0.7", default-features = false, features = ["codec"], optional = true }
+futures-util = { version = "0.3", default-features = false, features = ["std"], optional = true }
+
+axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.127"

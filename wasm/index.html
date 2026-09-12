@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Chirrp WebAssembly example</title>
+  <style>
+    body { max-width: 40rem; margin: 4rem auto; padding: 0 1rem; font: 18px/1.5 system-ui; }
+    button, select { font: inherit; padding: .5rem; }
+    audio { display: block; width: 100%; margin: 1rem 0; }
+  </style>
+  <h1>Chirrp in your browser</h1>
+  <p>Generate a sound locally, then play it or download the WAV.</p>
+  <label>Sound <select id="sound" disabled></select></label>
+  <button id="generate" disabled>Generate sound</button>
+  <p id="status" role="status">Loading WebAssembly…</p>
+  <audio id="audio" controls></audio>
+  <a id="download" hidden>Download WAV</a>
+  <script type="module" src="./example.js"></script>
+</html>

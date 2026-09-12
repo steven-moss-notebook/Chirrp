@@ -1,0 +1,4 @@
+interface:
+  display_name: "Chirrp Sound Design"
+  short_description: "Design, widen, and master procedural game sounds"
+  default_prompt: "Use $chirrp-sound-design to design and master a procedural game sound that fits its gameplay role."

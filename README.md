@@ -4,6 +4,8 @@ Deterministic procedural sound effects for Rust, with stereo PCM/WAV rendering, 
 
 Chirrp provides 39 synthesized presets: UI click, hover, confirm, error, footstep, explosion, laser, impact, pickup, jump, whoosh, power up, drop, tap, shake, wiggle, rattle, calculator, squish, squeeze, turn, tear, twist, tighten, poke, grab, ring, droplets, rain, wind, leaves, waves, rustling, thunder, dodge, slide, swing, stomp, and bird chirps. Use `catalog()` to discover their names and descriptions.
 
+An optional `chirrp-mcp` executable lets local agents generate and export game sounds through MCP. It is enabled by the `mcp` feature and is **not required to use the Rust library or WASM bindings**. See [local agent setup](#optional-mcp-server-for-local-agents).
+
 ## Install
 
 ```toml
@@ -36,6 +38,27 @@ Rendering is synchronous and offline. Bake sounds before playback or schedule re
 
 Sample rates from 22,050 through 96,000 Hz are supported. Identical recipes and rates reproduce identical PCM on the same target; floating-point differences may occur between architectures and WASM. These are bounded one-shot sounds, not seamless ambience loops.
 
+## Mix sounds
+
+Use `render_mix` to layer any nonempty list of recipes into one stereo buffer:
+
+```rust
+use chirrp::{Recipe, SoundKind, render_mix};
+
+let recipes = [
+    Recipe::new(SoundKind::Explosion, 42),
+    Recipe::new(SoundKind::Impact, 7),
+    Recipe::new(SoundKind::Laser, 19),
+];
+let audio = render_mix(&recipes, 48_000)?;
+let wav = audio.wav_bytes();
+# Ok::<(), chirrp::Error>(())
+```
+
+For already rendered sounds, use `chirrp::mix(&[&first, &second, &third])` to avoid rendering again. Inputs must have the same sample rate; an empty list or mismatched rates returns an error. There is no fixed limit on the number of sounds beyond available memory.
+
+Mixing uses the `symbios_audio::Mix` node. Sounds start together at frame zero, retain independent left/right channels, and last as long as the longest input, including room tails. Samples are summed at unity gain; if the result exceeds the 0.89 peak ceiling, the entire mix is attenuated equally in both channels. Quiet mixes are not amplified, and mixing one sound returns identical PCM.
+
 ## Edit and evolve sounds
 
 ```rust
@@ -66,28 +89,37 @@ Populations contain 2–12 candidates with zero-based indices. `randomize(streng
 
 ## Bevy integration
 
-With the `bevy` feature enabled:
+The `bevy` feature registers `Engine` as a resource through `ChirrpPlugin`. Generation belongs in startup/loading systems with `ResMut<Engine>` and `ResMut<SoundBank>`. Playback should only read the cached bank; it does not need the engine or another render.
 
-```rust
-# #[cfg(feature = "bevy")]
-# fn main() -> Result<(), Box<dyn std::error::Error>> {
-use bevy_app::App;
-use chirrp::{ChirrpPlugin, Engine, SoundKind};
+The [interactive Bevy example](examples/bevy-app/src/main.rs) uses a normal `DefaultPlugins` app with three buttons and actual device playback. Run it from a repository checkout:
 
-let mut app = App::new();
-app.add_plugins(ChirrpPlugin);
-let mut engine = app.world_mut().resource_mut::<Engine>();
-engine.create_sound(SoundKind::Laser, 42, 6)?;
-let audio = engine.render_audio(0, 48_000)?;
-# Ok(())
-# }
-# #[cfg(not(feature = "bevy"))]
-# fn main() {}
+```sh
+cargo run --manifest-path examples/bevy-app/Cargo.toml --locked
 ```
 
-The plugin only registers the resource. Generation and rendering remain explicit calls; it installs no audio backend or playback systems.
+Its event flow is:
+
+```text
+Startup: generate_bank → Assets<AudioSource> + SoundBank
+Button click → On<Pointer<Click>> → trigger PlaySound
+On<PlaySound> + Res<SoundBank> → AudioPlayer + PlaybackSettings::DESPAWN
+```
+
+Startup renders at 48 kHz, encodes WAV once, and stores strong asset handles in the bank. The playback observer clones a handle and spawns a voice; Bevy handles decoding, device output, and cleanup. It needs `Commands` to spawn the voice but only `Res<SoundBank>` for sound data, with no `ResMut<Engine>` or `ResMut<Assets<AudioSource>>`. In Bevy 0.19, observers handle triggered **Events**; buffered **Messages** use `MessageWriter` / `MessageReader` instead.
+
+The demo is a separate example crate so its UI, renderer, WAV decoder, and audio-device dependencies do not enter the library or MCP dependency tree. It needs a graphical session and an audio output device; Linux may need the platform's ALSA and windowing development packages. Its playback gain leaves some headroom, but production games should manage overlapping voice counts and bus levels. Larger sound banks should render during a loading state or on a worker, then insert completed assets before enabling playback.
+
+The [headless example](examples/headless.rs) demonstrates the same startup bank and read-only observer pattern with shared PCM and a voice entity, without opening a window or audio device:
+
+```sh
+cargo run --release --features bevy --example headless
+```
+
+`ChirrpPlugin` itself only registers the engine resource; the application owns the sound bank and playback backend.
 
 ## Agent integration
+
+Use the optional MCP server below to connect an existing agent, or integrate the library directly with your own agent host.
 
 `tool_definitions()` returns 12 provider-neutral tool definitions, each with its own JSON Schema. Register each definition with its corresponding `Engine` method: `list_sounds`, `random_sound`, `create_sound`, `list_candidates`, `select_candidate`, `randomize`, `evolve`, `edit_sound`, `get_recipe`, `analyze`, `render_audio`, and `export_wav`.
 
@@ -98,9 +130,62 @@ cargo run --release --example agent
 cargo run --release --example agent -- --tools
 ```
 
+### Optional MCP server for local agents
+
+`chirrp-mcp` is an optional executable that exposes 14 tools for generation, editing, evolution, analysis, mixing, and WAV export. It can run as a background local HTTP server or as an agent-managed stdio process. It needs no audio device or API key. The agent host supplies the model and handles playback.
+
+The server uses the official Rust MCP SDK, `rmcp` 3.3.0. The SDK and async runtime are optional native dependencies activated only by `mcp`; default library builds and WASM builds do not compile them. All MCP implementation code lives under `src/bin/`. Cargo features apply to the whole package, so enabling `mcp` also activates those dependencies when building native library targets in the same package; library users should leave it disabled.
+
+Install from a published release containing the MCP server:
+
+```sh
+cargo install chirrp --locked --features mcp --bin chirrp-mcp
+```
+
+The crates.io command requires a release containing the `mcp` feature. To install the current checkout, including changes that have not been published yet, run this from the repository root:
+
+```sh
+cargo install --path . --locked --features mcp --bin chirrp-mcp
+chirrp-mcp --help
+```
+
+Cargo installs the executable into `$CARGO_HOME/bin` (normally `~/.cargo/bin`; `%USERPROFILE%\.cargo\bin` on Windows). Add that directory to `PATH`, or use the executable's full path in your agent configuration. The `mcp` feature is opt-in; normal `chirrp` library dependencies keep the default feature set empty and do not build the server.
+
+The install configuration is in [`Cargo.toml`](Cargo.toml): `[[bin]]` names `chirrp-mcp` and sets `required-features = ["mcp"]`; `[features].mcp` enables its optional native dependencies. Cargo builds and installs that binary when you use the commands above. No separate install script is needed.
+
+Start the background server and choose where generated assets go:
+
+```sh
+chirrp-mcp start --output-folder /absolute/path/to/game/assets/audio
+```
+
+The command returns once the server is ready at `http://127.0.0.1:8765/mcp`. In your agent, add a **Streamable HTTP** MCP server using that URL. For clients accepting `mcpServers` URL entries:
+
+```json
+{
+  "mcpServers": {
+    "chirrp": { "url": "http://127.0.0.1:8765/mcp" }
+  }
+}
+```
+
+Stop it when finished:
+
+```sh
+chirrp-mcp stop
+```
+
+Use `--port 8766` on `start` to change the port. Alternatively, agents that launch their own subprocess can use command `chirrp-mcp` with arguments `["stdio", "--output-folder", "/absolute/path/to/game/assets/audio"]`; the agent then manages that process's lifetime. See [local agent setup](docs/mcp.md) for configuration and state/log locations.
+
+Then ask your agent:
+
+> Use Chirrp to generate a short laser shot, a heavy impact, and a quiet UI hover at 48 kHz with little reverb. Save the WAVs, mix the laser and impact into a fourth sound, and return the asset paths.
+
+`generate_sound` creates an asset in one call. For iterative design, use `create_sound`, `edit_sound` or `randomize`, then `export_wav`. `mix_sounds` layers recipe objects into one stereo asset. Exports create fresh directories containing `sound.wav` and reproducible `recipes.json` sidecars without overwriting existing files. Rendering happens locally; the tools return file paths and signal metrics. See [the MCP guide](docs/mcp.md) for all tools, recipe reuse, and protocol details.
+
 ## WASM library
 
-The crate also builds as a `cdylib` for `wasm32-unknown-unknown`. The JavaScript bindings expose a stateful `Chirrp` class and stateless `render_recipe` function. Build from the source directory with:
+The crate also builds as a `cdylib` for `wasm32-unknown-unknown`. The JavaScript bindings expose a stateful `Chirrp` class and stateless `render_recipe` and `render_mix` functions. Build from the source directory with:
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -109,6 +194,31 @@ bash scripts/build-wasm.sh
 ```
 
 Generated JavaScript, TypeScript declarations, and WASM go in `wasm/pkg/`. `WASM_BINDGEN=/path/to/wasm-bindgen bash scripts/build-wasm.sh` selects a matching binding executable.
+
+| File | Purpose |
+| --- | --- |
+| `wasm/pkg/chirrp_bg.wasm` | Compiled WebAssembly module to deploy |
+| `wasm/pkg/chirrp.js` | JavaScript loader and API; deploy beside the `.wasm` file |
+| `wasm/pkg/chirrp.d.ts` | TypeScript declarations for the JavaScript API |
+| `wasm/pkg/chirrp_bg.wasm.d.ts` | TypeScript declarations for the raw WASM exports |
+
+Re-run the build script after changing Rust code. `wasm/pkg/` is generated and ignored by Git. The intermediate `target/wasm32-unknown-unknown/release/chirrp.wasm` is the input to the binding generator; use the files in `wasm/pkg/` on your website.
+
+### Try it in a browser
+
+After building, run this from the repository root:
+
+```sh
+python3 -m http.server 8080 --bind 127.0.0.1 --directory wasm
+```
+
+Open [http://localhost:8080](http://localhost:8080), choose a preset, click **Generate sound**, and use the audio player's play button. You can also download the generated WAV. The example uses [a module worker](wasm/worker.js) to render without blocking the page.
+
+To deploy the complete example, copy `wasm/index.html`, `wasm/example.js`, `wasm/worker.js`, and `wasm/pkg/` into the same directory on your website. For your own integration, copy `wasm/pkg/` to a public assets directory and import its `chirrp.js` as an ES module. Keep `chirrp.js` and `chirrp_bg.wasm` together: `await init()` loads the binary relative to the JavaScript file. Serve over HTTP(S), with `.wasm` served as `application/wasm` and `.js` as JavaScript; opening the HTML through `file://` will not work.
+
+### Use the API
+
+The optional `wasm/tools.js` adapter adds named arguments and parsed results. Copy it too if using this example:
 
 ```js
 import init, { Chirrp } from './wasm/pkg/chirrp.js';
@@ -125,12 +235,26 @@ engine.free();
 
 Structured results from the direct WASM methods are JSON strings; the JavaScript tool adapter parses them and validates named arguments. Direct audio methods return typed arrays. An optional `publishAudio` callback passed to `createChirrpTools(engine, { publishAudio })` can store audio and return your host's artifact reference. The library itself performs no network upload. In browser applications, run offline rendering in your own Web Worker to avoid blocking the UI.
 
+To mix saved recipes in JavaScript, pass a JSON array to the stateless export:
+
+```js
+import { render_mix } from './wasm/pkg/chirrp.js';
+
+// After await init(); each entry is a parsed recipe object.
+const pcm = render_mix(JSON.stringify(recipes), 48_000); // Float32Array, stereo
+```
+
+## Procedural sound-design skill
+
+The repository includes [the `chirrp-sound-design` skill](.agents/skills/chirrp-sound-design/SKILL.md) for agents designing or improving game sounds. It explains the actual stereo, reverb, saturation, fade, and mastering chain; distinguishes peak protection from peak/loudness normalization; and covers mono compatibility, listening evaluation, and runtime mix headroom. Invoke it as `$chirrp-sound-design` in an agent that discovers repository skills, or point your agent to the file.
+
 ## Examples and development
 
 ```sh
 cargo run --release --example render -- explosion /tmp/explosion.wav 42
 cargo run --release --example audition -- /tmp/chirrp-audition
 cargo run --release --features bevy --example headless
+cargo test --manifest-path examples/bevy-app/Cargo.toml --locked
 
 cargo fmt --check
 cargo test --release --locked

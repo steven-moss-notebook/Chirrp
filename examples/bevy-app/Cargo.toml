@@ -1,0 +1,14 @@
+[package]
+name = "chirrp-bevy-example"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# A standalone example keeps window/GPU/device dependencies out of Chirrp.
+[dependencies]
+chirrp = { path = "../..", features = ["bevy"] }
+bevy = { version = "0.19", default-features = false, features = [
+    "std", "async_executor", "multi_threaded", "bevy_asset", "bevy_log",
+    "bevy_winit", "x11", "keyboard", "mouse", "default_font",
+    "ui_bevy_render", "ui_picking", "bevy_audio", "wav",
+] }

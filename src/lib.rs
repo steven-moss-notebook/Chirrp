@@ -11,7 +11,7 @@ mod wasm;
 
 pub use evolution::{Command, Engine, Session};
 pub use recipe::{CatalogEntry, Genome, Recipe, SoundKind, catalog};
-pub use render::{AudioBuffer, AudioMetrics, render};
+pub use render::{AudioBuffer, AudioMetrics, mix, render, render_mix};
 pub use symbios_audio;
 pub use tools::{CandidateSummary, SessionSummary, SoundEdits, ToolDefinition, tool_definitions};
 

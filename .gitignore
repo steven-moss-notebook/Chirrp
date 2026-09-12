@@ -1,4 +1,7 @@
 /target
+/examples/bevy-app/target
 /wasm/pkg
 /audition
+/chirrp-output
 *.wav
+.DS_Store

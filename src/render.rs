@@ -1,9 +1,12 @@
 use crate::{Error, Recipe, Result, SoundKind};
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 use std::f32::consts::PI;
 use symbios_audio::{
-    AdsrEnvelope, AntiAlias, AudioPatch, BiquadLowpass, Connection as C, Gain, GraphNode, Mix,
-    NodeGraph, NodeId, NodeKind as N, PinkNoise, SawtoothOsc, SineOsc, WhiteNoise,
+    AdsrEnvelope, AntiAlias, AudioPatch, BakeContext, BiquadLowpass, Connection as C, Gain,
+    GraphNode, Mix, Node, NodeGraph, NodeId, NodeKind as N, PinkNoise, SawtoothOsc, SineOsc,
+    WhiteNoise,
 };
 
 #[derive(Debug, Clone, Serialize)]
@@ -78,6 +81,86 @@ impl AudioBuffer {
         }
         out
     }
+}
+
+/// Mix any nonempty collection of rendered sounds using Symbios's [`Mix`] node.
+///
+/// All sounds start at frame zero. Stereo channels are summed independently,
+/// and shorter sounds are padded with silence to the longest input's duration.
+/// The sum retains unity gain unless its peak exceeds 0.89, in which case one
+/// gain is applied to both channels across the entire output. A single input
+/// is unchanged. Input buffers are borrowed and never modified.
+///
+/// Returns an error for an empty collection or mismatched sample rates.
+/// Like [`render`], this allocates and is intended for offline use.
+pub fn mix(sounds: &[&AudioBuffer]) -> Result<AudioBuffer> {
+    let first = sounds
+        .first()
+        .ok_or_else(|| Error("mix requires at least one sound".into()))?;
+    let sample_rate = first.sample_rate;
+    if sounds.iter().any(|sound| sound.sample_rate != sample_rate) {
+        return Err(Error(
+            "all mixed sounds must have the same sample_rate".into(),
+        ));
+    }
+    if sounds.len() == 1 {
+        return Ok((*first).clone());
+    }
+    let frames = sounds.iter().map(|sound| sound.frames()).max().unwrap();
+    let mixer = Mix::default();
+    // Mix is stateless and does not use the RNG required by BakeContext.
+    let mut rng = ChaCha8Rng::seed_from_u64(0);
+    let mut inputs = vec![("in", 0.); sounds.len()];
+    let mut samples = Vec::with_capacity(frames * 2);
+    let mut peak = 0f32;
+    for i in 0..frames * 2 {
+        for (input, sound) in inputs.iter_mut().zip(sounds) {
+            input.1 = sound.samples.get(i).copied().unwrap_or(0.);
+        }
+        // The same stateless node handles left and right independently.
+        let mut ctx = BakeContext::new(
+            sample_rate,
+            (i / 2) as u64,
+            frames as u64,
+            &mut rng,
+            &inputs,
+            None,
+        );
+        let sample = mixer.sample(&mut ctx);
+        if !sample.is_finite() {
+            return Err(Error("mix produced non-finite samples".into()));
+        }
+        peak = peak.max(sample.abs());
+        samples.push(sample);
+    }
+    if peak > 0.89 {
+        let gain = 0.89 / peak;
+        for sample in &mut samples {
+            *sample *= gain;
+        }
+    }
+    Ok(AudioBuffer {
+        sample_rate,
+        samples,
+    })
+}
+
+/// Render any nonempty collection of recipes at a common rate, then [`mix`]
+/// their audio. Each recipe retains its own seed, sound design, and stereo room
+/// tail. Supports the same sample rates and validation as [`render`].
+pub fn render_mix(recipes: &[Recipe], sample_rate: u32) -> Result<AudioBuffer> {
+    if recipes.is_empty() {
+        return Err(Error("mix requires at least one sound".into()));
+    }
+    // Reject invalid recipes before doing any synthesis.
+    for recipe in recipes {
+        recipe.validate()?;
+    }
+    let sounds = recipes
+        .iter()
+        .map(|recipe| render(recipe, sample_rate))
+        .collect::<Result<Vec<_>>>()?;
+    mix(&sounds.iter().collect::<Vec<_>>())
 }
 
 fn node(id: u32, kind: N) -> GraphNode {

@@ -133,6 +133,16 @@ pub fn render_recipe(json: &str, sample_rate: u32) -> std::result::Result<Vec<f3
         .map(|a| a.into_samples())
         .map_err(js_error)
 }
+/// Render and mix a nonempty JSON array of recipes. Returns stereo interleaved
+/// Float32Array PCM, aligned at frame zero and lasting as long as the longest
+/// sound, with a shared peak ceiling of 0.89.
+#[wasm_bindgen]
+pub fn render_mix(json: &str, sample_rate: u32) -> std::result::Result<Vec<f32>, JsValue> {
+    let recipes: Vec<Recipe> = serde_json::from_str(json).map_err(|e| js_error(e.into()))?;
+    crate::render_mix(&recipes, sample_rate)
+        .map(|audio| audio.into_samples())
+        .map_err(js_error)
+}
 fn js_error(error: crate::Error) -> JsValue {
     JsValue::from_str(&error.to_string())
 }

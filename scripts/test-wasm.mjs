@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import init, { Chirrp, render_recipe } from '../wasm/pkg/chirrp.js';
+import init, { Chirrp, render_recipe, render_mix } from '../wasm/pkg/chirrp.js';
 
 await init({ module_or_path: await readFile(new URL('../wasm/pkg/chirrp_bg.wasm', import.meta.url)) });
 const engine = new Chirrp();
@@ -67,5 +67,32 @@ engine.create_sound('waves', 42, 6);
 const waves = engine.render_audio(0, 24000);
 assert.equal(createHash('sha256').update(new Uint8Array(waves.buffer)).digest('hex'), sceneHashes.waves,
   'The waves default must remain unchanged');
+const mixRecipes = [];
+for (const kind of ['ui_hover', 'laser', 'impact']) {
+  engine.create_sound(kind, 42, 6);
+  mixRecipes.push(JSON.parse(engine.get_recipe(0)));
+}
+const mixInputs = mixRecipes.map(recipe => render_recipe(JSON.stringify(recipe), 24000));
+assert.deepEqual(render_mix(JSON.stringify(mixRecipes.slice(0, 1)), 24000), mixInputs[0]);
+const mixed = render_mix(JSON.stringify(mixRecipes), 24000);
+assert.ok(mixed instanceof Float32Array);
+assert.equal(mixed.length, Math.max(...mixInputs.map(pcm => pcm.length)));
+const expectedMix = new Float32Array(mixed.length);
+let mixPeak = 0;
+for (let i = 0; i < expectedMix.length; i++) {
+  for (const pcm of mixInputs) expectedMix[i] += pcm[i] ?? 0;
+  mixPeak = Math.max(mixPeak, Math.abs(expectedMix[i]));
+}
+const mixGain = mixPeak > 0.89 ? 0.89 / mixPeak : 1;
+for (let i = 0; i < mixed.length; i++) {
+  assert.ok(Number.isFinite(mixed[i]) && Math.abs(mixed[i]) < 0.890001);
+  assert.ok(Math.abs(mixed[i] - expectedMix[i] * mixGain) < 1e-6);
+}
+const manyMixed = render_mix(JSON.stringify(Array(17).fill(mixRecipes[0])), 24000);
+assert.equal(manyMixed.length, mixInputs[0].length);
+assert.throws(() => render_mix('[]', 24000));
+assert.throws(() => render_mix('invalid JSON', 24000));
+assert.throws(() => render_mix(JSON.stringify(mixRecipes), 0));
+assert.throws(() => render_mix(JSON.stringify([{ ...mixRecipes[0], version: 99 }]), 24000));
 engine.free();
 console.log('WASM integration checks passed.');
