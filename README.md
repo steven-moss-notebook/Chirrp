@@ -144,20 +144,6 @@ node scripts/test-tools.mjs
 
 Tests cover all presets, deterministic PCM, stereo/mono behavior, WAV encoding, mutation and selection, persistence, validation, legacy sound designs, and headless Bevy integration. The JavaScript tests execute the actual WASM binary. See [sound design notes](docs/sound-design.md) for synthesis details and parameter bounds. Chirrp uses `symbios-audio` 0.2.1 and `symbios-genetics`; it does not dispatch Rayon work, although its dependencies bring Rayon into the dependency tree.
 
-## Publishing
-
-The crate archive includes the library, examples, tests and fixtures, WASM adapter/build scripts, documentation, and licenses. Generated audio, WASM artifacts, and build output are excluded.
-
-From a clean, committed checkout:
-
-```sh
-cargo publish --dry-run --locked
-cargo login
-cargo publish --locked
-```
-
-The dry run packages and compiles the crate without uploading it. Publishing requires a crates.io account and an available crate name (or ownership of an existing `chirrp` crate). Set a `repository` URL in `Cargo.toml` once the source repository is hosted.
-
 ## License
 
 Licensed under either the [MIT license](LICENSE-MIT) or the [Apache License, Version 2.0](LICENSE-APACHE), at your option.
