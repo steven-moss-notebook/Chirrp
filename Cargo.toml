@@ -1,0 +1,46 @@
+[package]
+name = "chirrp"
+version = "0.1.0"
+edition = "2024"
+description = "Deterministic procedural sound effects with stereo rendering, evolution, and optional Bevy integration"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+documentation = "https://docs.rs/chirrp"
+keywords = ["audio", "procedural", "sound-effects", "gamedev", "bevy"]
+categories = ["multimedia::audio", "game-development"]
+include = ["/src/**", "/examples/**", "/tests/**", "/references/**", "/docs/**", "/wasm/tools.js", "/wasm/package.json", "/scripts/**", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE", "/Cargo.toml", "/Cargo.lock"]
+
+[package.metadata.docs.rs]
+all-features = true
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+[features]
+default = []
+bevy = ["dep:bevy_app", "dep:bevy_ecs"]
+
+[[example]]
+name = "headless"
+required-features = ["bevy"]
+
+[dependencies]
+# The exact DSP/genetics core re-exported by bevy_symbios_audio 0.4.2.
+# Its wrapper enables Bevy's desktop defaults and a native Rayon bake pool.
+symbios-audio = "=0.2.1"
+symbios-genetics = { version = "0.2.2", default-features = false }
+bevy_app = { version = "0.19", default-features = false, features = ["std"], optional = true }
+bevy_ecs = { version = "0.19", default-features = false, features = ["std"], optional = true }
+rand = { version = "0.9", default-features = false, features = ["std"] }
+rand_chacha = "0.9"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "=0.2.127"
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1

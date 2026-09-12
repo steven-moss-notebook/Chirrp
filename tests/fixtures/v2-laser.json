@@ -1,0 +1,1 @@
+{"version":2,"kind":"laser","seed":42,"genome":{"tone":{"freq_hz":240.0,"phase_offset":0.0,"amplitude":0.65},"envelope":{"attack_s":0.004,"decay_s":0.24,"sustain_level":0.0,"release_s":0.03,"curve":"Exponential"},"filter":{"cutoff_hz":2800.0,"q":0.707},"noise":{"gain":0.12},"body":{"gain":0.45},"sweep":0.45,"texture":0.24,"width":0.8,"room":0.16,"drive":1.05}}

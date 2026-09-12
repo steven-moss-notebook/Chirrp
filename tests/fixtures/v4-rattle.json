@@ -1,0 +1,1 @@
+{"version":4,"kind":"rattle","seed":42,"genome":{"tone":{"freq_hz":620.0,"phase_offset":0.0,"amplitude":0.65},"envelope":{"attack_s":0.002,"decay_s":1.1,"sustain_level":0.0,"release_s":0.03,"curve":"Exponential"},"filter":{"cutoff_hz":8500.0,"q":0.707},"noise":{"gain":0.85},"body":{"gain":0.65},"sweep":0.2,"texture":0.8,"width":1.25,"room":0.55,"drive":1.3}}

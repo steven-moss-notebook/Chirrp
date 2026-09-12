@@ -1,0 +1,1 @@
+{"version":4,"kind":"rustling","seed":42,"genome":{"tone":{"freq_hz":360.0,"phase_offset":0.0,"amplitude":0.65},"envelope":{"attack_s":0.06,"decay_s":1.15,"sustain_level":0.0,"release_s":0.03,"curve":"Exponential"},"filter":{"cutoff_hz":6800.0,"q":0.707},"noise":{"gain":0.95},"body":{"gain":0.35},"sweep":0.0,"texture":0.7,"width":1.25,"room":0.35,"drive":1.3}}

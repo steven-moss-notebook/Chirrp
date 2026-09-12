@@ -1,0 +1,1 @@
+{"version":2,"kind":"footstep","seed":42,"genome":{"tone":{"freq_hz":110.0,"phase_offset":0.0,"amplitude":0.65},"envelope":{"attack_s":0.004,"decay_s":0.18,"sustain_level":0.0,"release_s":0.03,"curve":"Exponential"},"filter":{"cutoff_hz":2100.0,"q":0.707},"noise":{"gain":0.8},"body":{"gain":0.9},"sweep":0.0,"texture":0.16,"width":0.35,"room":0.025,"drive":1.05}}
