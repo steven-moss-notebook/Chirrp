@@ -1,6 +1,6 @@
 [package]
 name = "chirrp"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Deterministic procedural sound effects with stereo rendering, evolution, and optional Bevy integration"
 license = "MIT OR Apache-2.0"
@@ -9,6 +9,7 @@ documentation = "https://docs.rs/chirrp"
 keywords = ["audio", "procedural", "sound-effects", "gamedev", "bevy"]
 categories = ["multimedia::audio", "game-development"]
 include = ["/src/**", "/examples/**", "/tests/**", "/references/**", "/docs/**", "/wasm/tools.js", "/wasm/package.json", "/scripts/**", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE", "/Cargo.toml", "/Cargo.lock"]
+repository = "https://github.com/steven-moss-notebook/Chirrp"
 
 [package.metadata.docs.rs]
 all-features = true
