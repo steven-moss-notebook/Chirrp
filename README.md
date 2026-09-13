@@ -181,7 +181,9 @@ Then ask your agent:
 
 > Use Chirrp to generate a short laser shot, a heavy impact, and a quiet UI hover at 48 kHz with little reverb. Save the WAVs, mix the laser and impact into a fourth sound, and return the asset paths.
 
-`generate_sound` creates an asset in one call. For iterative design, use `create_sound`, `edit_sound` or `randomize`, then `export_wav`. `mix_sounds` layers recipe objects into one stereo asset. Exports create fresh directories containing `sound.wav` and reproducible `recipes.json` sidecars without overwriting existing files. Rendering happens locally; the tools return file paths and signal metrics. See [the MCP guide](docs/mcp.md) for all tools, recipe reuse, and protocol details.
+`generate_sound` creates an asset in one call. For iterative design, use `create_sound`, `edit_sound` or `randomize`, then `export_wav`. `mix_sounds` layers up to 32 recipe objects into one stereo asset. Exports create fresh directories containing `sound.wav` and reproducible `recipes.json` sidecars without overwriting existing files. Rendering happens locally; the tools return file paths and signal metrics.
+
+HTTP authentication is optional: set `CHIRRP_MCP_AUTH_TOKEN` to a random 32–256 character bearer token before `start`, then configure the same token in your agent. The server remains loopback-only. Requests and tool work are bounded, and discovery/export tools publish output schemas. See [the MCP guide](docs/mcp.md) for authentication setup, limits, recipe reuse, and protocol details.
 
 ## WASM library
 

@@ -26,6 +26,8 @@ impl Client {
             NEXT.fetch_add(1, Ordering::Relaxed)
         ));
         let mut child = Command::new(env!("CARGO_BIN_EXE_chirrp-mcp"))
+            // HTTP authentication settings must never gate stdio.
+            .env("CHIRRP_MCP_AUTH_TOKEN", "invalid-for-http")
             .arg("stdio")
             .arg("--output-folder")
             .arg(&directory)
@@ -137,6 +139,7 @@ fn stdio_lifecycle_discovery_and_protocol_errors() {
         .unwrap();
     assert_eq!(export["annotations"]["readOnlyHint"], false);
     assert_eq!(export["annotations"]["destructiveHint"], false);
+    assert_eq!(export["outputSchema"]["type"], "object");
     let list = tools
         .iter()
         .find(|tool| tool["name"] == "list_sounds")
@@ -256,13 +259,62 @@ fn editing_workflow_validates_arguments_and_preserves_state_on_errors() {
 fn invalid_exports_do_not_write_assets() {
     let mut client = Client::new();
     client.initialize();
-    for name in ["../escape", "/tmp/escape", "", "a/b", "a\\b"] {
+    for name in [
+        "../escape",
+        "/tmp/escape",
+        "",
+        "a/b",
+        "a\\b",
+        "é",
+        &"a".repeat(81),
+    ] {
         client.tool_error("generate_sound", json!({"kind":"ui_click","name":name}));
     }
     client.tool_error("generate_sound", json!({"kind":"unknown"}));
     client.tool_error("generate_sound", json!({"kind":"ui_click","sample_rate":0}));
     client.tool_error("mix_sounds", json!({"recipes":[]}));
     client.tool_error("mix_sounds", json!({"recipes":[{"version":99}]}));
+    client.tool_error(
+        "mix_sounds",
+        json!({"recipes":vec![chirrp::Recipe::new(chirrp::SoundKind::UiClick, 42); 33]}),
+    );
+    assert_eq!(fs::read_dir(&client.directory).unwrap().count(), 0);
+}
+
+#[test]
+fn admission_limit_rejects_excess_work_and_recovers_after_cancellation() {
+    let mut client = Client::new();
+    client.initialize();
+    client.id += 1;
+    let first = client.id;
+    client.send(&json!({"jsonrpc":"2.0","id":first,"method":"tools/call","params":{
+        "name":"mix_sounds","arguments":{"recipes":vec![chirrp::Recipe::new(chirrp::SoundKind::Thunder, 42);32],"sample_rate":96000}
+    }}).to_string());
+    for _ in 0..32 {
+        client.id += 1;
+        client.send(
+            &json!({"jsonrpc":"2.0","id":client.id,"method":"tools/call","params":{
+                "name":"list_sounds","arguments":{}
+            }})
+            .to_string(),
+        );
+    }
+    let busy = client.receive();
+    assert_eq!(busy["result"]["isError"], true, "{busy}");
+    assert!(
+        busy["result"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("server busy")
+    );
+    for id in first..=client.id {
+        client.send(
+            &json!({"jsonrpc":"2.0","method":"notifications/cancelled","params":{"requestId":id}})
+                .to_string(),
+        );
+    }
+    assert_eq!(client.request("ping", json!({}))["result"], json!({}));
+    client.tool("list_sounds", json!({}));
     assert_eq!(fs::read_dir(&client.directory).unwrap().count(), 0);
 }
 

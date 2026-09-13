@@ -10,6 +10,7 @@ use std::time::Duration;
 struct Instance {
     directory: std::path::PathBuf,
     port: u16,
+    token: Option<String>,
 }
 
 impl Instance {
@@ -20,11 +21,17 @@ impl Instance {
                 .unwrap()
                 .join(format!("chirrp-http-test-{}", uuid::Uuid::new_v4())),
             port: 0,
+            token: None,
         }
     }
 
     fn command(&self, args: &[&str]) -> Output {
-        Command::new(env!("CARGO_BIN_EXE_chirrp-mcp"))
+        let mut command = Command::new(env!("CARGO_BIN_EXE_chirrp-mcp"));
+        command.env_remove("CHIRRP_MCP_AUTH_TOKEN");
+        if let Some(token) = &self.token {
+            command.env("CHIRRP_MCP_AUTH_TOKEN", token);
+        }
+        command
             .env("CHIRRP_MCP_STATE_DIR", self.directory.join("state"))
             .args(args)
             .output()
@@ -56,6 +63,17 @@ impl Instance {
     }
 
     fn http(&self, path: &str, headers: &str, body: &str) -> (u16, String) {
+        let (status, body, _) = self.http_method("POST", path, headers, body);
+        (status, body)
+    }
+
+    fn http_method(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &str,
+        body: &str,
+    ) -> (u16, String, String) {
         let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, self.port)).unwrap();
         stream
             .set_read_timeout(Some(Duration::from_secs(30)))
@@ -63,7 +81,7 @@ impl Instance {
         stream
             .set_write_timeout(Some(Duration::from_secs(5)))
             .unwrap();
-        write!(stream, "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nConnection: close\r\nContent-Length: {}\r\n{headers}\r\n{body}", self.port, body.len()).unwrap();
+        write!(stream, "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nConnection: close\r\nContent-Length: {}\r\n{headers}\r\n{body}", self.port, body.len()).unwrap();
         let mut response = String::new();
         stream.read_to_string(&mut response).unwrap();
         let (headers, body) = response.split_once("\r\n\r\n").unwrap();
@@ -83,9 +101,9 @@ impl Instance {
                 decoded.push_str(&data[..size]);
                 rest = &data[size + 2..];
             }
-            (status, decoded)
+            (status, decoded, headers.to_owned())
         } else {
-            (status, body.to_owned())
+            (status, body.to_owned(), headers.to_owned())
         }
     }
 
@@ -96,6 +114,9 @@ impl Instance {
             "io.modelcontextprotocol/clientCapabilities": {}
         });
         let mut headers = format!("MCP-Protocol-Version: 2026-07-28\r\nMcp-Method: {method}\r\n");
+        if let Some(token) = &self.token {
+            headers.push_str(&format!("Authorization: Bearer {token}\r\n"));
+        }
         if let Some(name) = params["name"].as_str() {
             headers.push_str(&format!("Mcp-Name: {name}\r\n"));
         }
@@ -114,6 +135,96 @@ impl Instance {
         let result = self.request("tools/call", json!({"name":name,"arguments":arguments}));
         assert_eq!(result["isError"], false, "{result}");
         result["structuredContent"].clone()
+    }
+}
+
+#[test]
+fn optional_auth_protects_every_http_method_and_keeps_control_credentials_separate() {
+    let mut instance = Instance::new();
+    let token = "test-secret-with-at-least-32-characters";
+    instance.token = Some(token.into());
+    instance.start();
+    for method in ["GET", "POST", "DELETE", "OPTIONS"] {
+        let (status, body, headers) = instance.http_method(method, "/mcp", "", "{}");
+        assert_eq!(status, 401, "{method}: {body}");
+        let headers = headers.to_lowercase();
+        assert!(headers.contains("www-authenticate: bearer realm=\"chirrp-mcp\""));
+        assert!(headers.contains("cache-control: no-store"));
+        assert!(!body.contains(token));
+    }
+    for headers in [
+        "Authorization: Bearer wrong\r\n".to_owned(),
+        format!("Authorization: Basic {token}\r\n"),
+        format!("Authorization: Bearer {token}\r\nAuthorization: Bearer {token}\r\n"),
+    ] {
+        assert_eq!(instance.http("/mcp", &headers, "{}").0, 401);
+    }
+    assert_eq!(
+        instance
+            .http(&format!("/mcp?access_token={token}"), "", "{}")
+            .0,
+        401
+    );
+    let asset = instance.tool("generate_sound", json!({"kind":"ui_click"}));
+    assert!(std::path::Path::new(asset["path"].as_str().unwrap()).is_file());
+    let headers = format!("Authorization: bEaReR {token}\r\nOrigin: https://example.com\r\n");
+    assert_eq!(instance.http("/mcp", &headers, "{}").0, 403);
+    assert_eq!(
+        instance
+            .http(
+                "/_shutdown",
+                &format!("Authorization: Bearer {token}\r\n"),
+                ""
+            )
+            .0,
+        403
+    );
+    let state_text = fs::read_to_string(instance.directory.join("state/server.json")).unwrap();
+    assert!(!state_text.contains(token));
+    assert!(
+        !fs::read_to_string(instance.directory.join("state/server.log"))
+            .unwrap()
+            .contains(token)
+    );
+    let state: Value = serde_json::from_str(&state_text).unwrap();
+    assert_eq!(
+        instance
+            .http(
+                "/mcp",
+                &format!(
+                    "Authorization: Bearer {}\r\n",
+                    state["token"].as_str().unwrap()
+                ),
+                "{}"
+            )
+            .0,
+        401
+    );
+    instance.token = None;
+    assert!(
+        instance.command(&["stop"]).status.success(),
+        "stop does not require the MCP token"
+    );
+}
+
+#[test]
+fn invalid_auth_configuration_fails_closed_without_echoing_secrets() {
+    let mut instance = Instance::new();
+    for token in [
+        "",
+        "short",
+        "invalid secret with spaces that is long enough",
+        &"x".repeat(257),
+    ] {
+        instance.token = Some(token.into());
+        let result = instance.command(&["start", "--port", "0"]);
+        assert!(!result.status.success());
+        let message = String::from_utf8_lossy(&result.stderr);
+        assert!(message.contains("CHIRRP_MCP_AUTH_TOKEN"));
+        if !token.is_empty() {
+            assert!(!message.contains(token));
+        }
+        assert!(!instance.directory.join("state/server.json").exists());
     }
 }
 

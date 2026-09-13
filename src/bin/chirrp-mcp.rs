@@ -8,6 +8,10 @@ mod server;
 mod cli;
 
 #[cfg(not(target_arch = "wasm32"))]
+#[path = "mcp/security.rs"]
+mod security;
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() {
     if let Err(error) = cli::run() {
         eprintln!("chirrp-mcp: {error}");

@@ -20,7 +20,7 @@ crate-type = ["rlib", "cdylib"]
 [features]
 default = []
 # Opt in to the standalone server: cargo install chirrp --features mcp --bin chirrp-mcp
-mcp = ["dep:rmcp", "dep:tokio", "dep:tokio-util", "dep:futures-util", "dep:axum", "dep:uuid"]
+mcp = ["dep:rmcp", "dep:tokio", "dep:tokio-util", "dep:futures-util", "dep:axum", "dep:uuid", "dep:subtle"]
 bevy = ["dep:bevy_app", "dep:bevy_ecs"]
 
 [[bin]]
@@ -53,6 +53,7 @@ futures-util = { version = "0.3", default-features = false, features = ["std"], 
 
 axum = { version = "0.8", default-features = false, features = ["http1", "tokio"], optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
+subtle = { version = "2.6", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.127"

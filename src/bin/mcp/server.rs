@@ -15,12 +15,15 @@ use std::fs;
 use std::io;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use std::time::Duration;
+use tokio::sync::{Mutex, Semaphore};
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tokio_util::sync::CancellationToken;
 
 pub(super) type Result<T> = std::result::Result<T, Box<dyn std::error::Error + Send + Sync>>;
 pub(super) const MAX_REQUEST: usize = 1024 * 1024;
+const MAX_TOOL_CALLS: usize = 32;
+const TOOL_TIMEOUT: Duration = Duration::from_secs(120);
 
 pub async fn serve_stdio(output: PathBuf) -> Result<()> {
     let server = Server::new(output)?;
@@ -43,7 +46,7 @@ pub async fn serve_stdio(output: PathBuf) -> Result<()> {
         stdout,
         JsonRpcMessageCodec::<TxJsonRpcMessage<RoleServer>>::new(),
     );
-    let service = server.serve((writer, reader)).await?;
+    let service = server.clone().serve((writer, reader)).await?;
     let cancellation = service.cancellation_token();
     let shutdown = tokio::spawn(async move {
         if tokio::signal::ctrl_c().await.is_ok() {
@@ -52,6 +55,7 @@ pub async fn serve_stdio(output: PathBuf) -> Result<()> {
     });
     let result = service.waiting().await;
     shutdown.abort();
+    server.finish_work().await;
     result?;
     Ok(())
 }
@@ -60,7 +64,7 @@ fn definitions() -> Result<Vec<Tool>> {
     let mut tools: Vec<_> = chirrp::tool_definitions().into_iter().map(|tool| {
         json!({"name":tool.name,"description":tool.description,"inputSchema":tool.input_schema})
     }).collect();
-    let name = json!({"type":"string","description":"Optional asset directory label, using ASCII letters, digits, hyphens or underscores (1–80 characters). A numeric suffix prevents overwrites."});
+    let name = json!({"type":"string","minLength":1,"maxLength":80,"pattern":"^[A-Za-z0-9_-]+$","description":"Optional asset directory label, using ASCII letters, digits, hyphens or underscores (1–80 characters). A numeric suffix prevents overwrites."});
     for tool in &mut tools {
         if matches!(tool["name"].as_str(), Some("render_audio" | "export_wav")) {
             tool["description"] = json!(
@@ -83,12 +87,37 @@ fn definitions() -> Result<Vec<Tool>> {
     }));
     tools.push(json!({
         "name":"mix_sounds",
-        "description":"Render and layer any nonempty array of recipe objects (from get_recipe or the recipes array in a saved sidecar). Saves a stereo WAV and all recipes. Sounds start together, preserve the longest tail, and share a 0.89 peak ceiling. Accepts one recipe to re-render a saved sound. Does not change the active session.",
+        "description":"Render and layer 1–32 recipe objects (from get_recipe or the recipes array in a saved sidecar). Saves a stereo WAV and all recipes. Sounds start together, preserve the longest tail, and share a 0.89 peak ceiling. Accepts one recipe to re-render a saved sound. Does not change the active session.",
         "inputSchema":{"type":"object","additionalProperties":false,"required":["recipes"],"properties":{
-            "recipes":{"type":"array","minItems":1,"items":{"type":"object","description":"A complete Chirrp recipe object, including version, kind, seed, and genome."}},
+            "recipes":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","description":"A complete Chirrp recipe object, including version, kind, seed, and genome."}},
             "sample_rate":rate,"name":name
         }}
     }));
+    for tool in &mut tools {
+        if matches!(
+            tool["name"].as_str(),
+            Some("generate_sound" | "mix_sounds" | "render_audio" | "export_wav")
+        ) {
+            tool["outputSchema"] = json!({"type":"object","additionalProperties":false,
+                "required":["path","recipe_path","format","sample_rate","channels","frames","metrics"],
+                "properties":{
+                    "path":{"type":"string"},"recipe_path":{"type":"string"},"format":{"const":"wav"},
+                    "sample_rate":{"type":"integer","minimum":22050,"maximum":96000},
+                    "channels":{"const":2},"frames":{"type":"integer","minimum":1},
+                    "metrics":{"type":"object","required":["peak","rms","stereo_correlation","duration_seconds"],"properties":{
+                        "peak":{"type":"number"},"rms":{"type":"number"},
+                        "stereo_correlation":{"type":"number"},"duration_seconds":{"type":"number"}
+                    },"additionalProperties":false}
+                }
+            });
+        } else if tool["name"] == "list_sounds" {
+            tool["outputSchema"] = json!({"type":"object","required":["sounds"],"properties":{
+                "sounds":{"type":"array","items":{"type":"object","required":["kind","label","description"],"properties":{
+                    "kind":{"type":"string"},"label":{"type":"string"},"description":{"type":"string"}
+                },"additionalProperties":false}}
+            },"additionalProperties":false});
+        }
+    }
     tools
         .into_iter()
         .map(|value| {
@@ -117,6 +146,8 @@ fn definitions() -> Result<Vec<Tool>> {
 pub(super) struct Server {
     worker: Arc<Mutex<Worker>>,
     tools: Vec<Tool>,
+    capacity: Arc<Semaphore>,
+    tool_timeout: Duration,
 }
 
 impl Server {
@@ -128,6 +159,8 @@ impl Server {
                 output: output.canonicalize()?,
             })),
             tools: definitions()?,
+            capacity: Arc::new(Semaphore::new(MAX_TOOL_CALLS)),
+            tool_timeout: TOOL_TIMEOUT,
         })
     }
 
@@ -141,7 +174,7 @@ impl ServerHandler for Server {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("chirrp", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Generate local game sound assets with generate_sound. Use list_sounds to discover presets. For iterative design: create_sound, edit_sound/randomize/evolve, then export_wav. Each process has one editing session. Get recipes before replacing it to mix different categories with mix_sounds. Exports return local WAV paths and recipes.json sidecars; the host handles playback. Tool operations run offline and are serialized.")
+            .with_instructions("Generate local game sound assets with generate_sound. Use list_sounds to discover presets. For iterative design: create_sound, edit_sound/randomize/evolve, then export_wav. Each process has one shared editing session, including authenticated HTTP clients. Get recipes before replacing it to mix different categories with mix_sounds (up to 32 layers). Exports return local WAV paths and recipes.json sidecars; the host handles playback. Tool operations run offline and are serialized, with at most 32 outstanding calls and a 120-second deadline including queue time. Busy errors may be retried later; after a timeout or cancellation, check for an export before retrying a write.")
     }
 
     fn get_tool(&self, name: &str) -> Option<Tool> {
@@ -177,22 +210,34 @@ impl ServerHandler for Server {
         if let Err(error) = validate(&tool.schema_as_json_value(), &mut args, &tool.name) {
             return Ok(tool_error(error.to_string()).into());
         }
+        let Ok(permit) = self.capacity.clone().try_acquire_owned() else {
+            return Ok(tool_error(
+                "server busy: at most 32 tool calls may be outstanding; retry later".into(),
+            )
+            .into());
+        };
+        let cancellation = context.ct.child_token();
+        // A timeout, cancellation, or dropped request must also cancel its worker.
+        let _cancel_on_drop = cancellation.clone().drop_guard();
+        let deadline = tokio::time::Instant::now() + self.tool_timeout;
         // Wait asynchronously for exclusive access to the session. Moving the
         // owned guard into spawn_blocking prevents canceled tasks from releasing
         // it while a render is still running, bounding CPU and memory use.
         let mut worker = tokio::select! {
             biased;
             _ = context.ct.cancelled() => return Ok(tool_error("tool call cancelled".into()).into()),
+            _ = tokio::time::sleep_until(deadline) => return Ok(tool_error("tool call timed out while queued; retry later".into()).into()),
             worker = self.worker.clone().lock_owned() => worker,
         };
-        let cancellation = context.ct.clone();
         let work = tokio::task::spawn_blocking(move || {
+            let _permit = permit;
             check_cancelled(&cancellation)?;
             worker.call(&tool.name, args, &cancellation)
         });
         let result = tokio::select! {
             biased;
             _ = context.ct.cancelled() => return Ok(tool_error("tool call cancelled".into()).into()),
+            _ = tokio::time::sleep_until(deadline) => return Ok(tool_error("tool call timed out; check for an export before retrying".into()).into()),
             result = work => result,
         }.map_err(|error| {
             eprintln!("chirrp-mcp worker: {error}");
@@ -327,10 +372,12 @@ impl Worker {
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => suffix += 1,
                 Err(e) => return Err(e.into()),
             }
+            check_cancelled(cancellation)?;
         };
         let wav_path = directory.join("sound.wav");
         let recipe_path = directory.join("recipes.json");
         let write = || -> Result<()> {
+            check_cancelled(cancellation)?;
             fs::write(&wav_path, audio.wav_bytes())?;
             fs::write(
                 &recipe_path,
@@ -421,7 +468,19 @@ fn validate(schema: &Value, value: &mut Value, path: &str) -> Result<()> {
             }
         }
         Some("string") => {
-            if !value.is_string()
+            let string = value.as_str().ok_or_else(invalid)?;
+            let length = string.chars().count();
+            if schema["minLength"]
+                .as_u64()
+                .is_some_and(|min| length < min as usize)
+                || schema["maxLength"]
+                    .as_u64()
+                    .is_some_and(|max| length > max as usize)
+                || (schema["pattern"] == "^[A-Za-z0-9_-]+$"
+                    && (string.is_empty()
+                        || !string
+                            .bytes()
+                            .all(|c| c.is_ascii_alphanumeric() || b"_-".contains(&c))))
                 || schema["enum"]
                     .as_array()
                     .is_some_and(|allowed| !allowed.contains(value))
@@ -432,4 +491,61 @@ fn validate(schema: &Value, value: &mut Value, path: &str) -> Result<()> {
         _ => return Err("unsupported argument schema".into()),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn deadlines_release_queued_work_and_cancel_active_exports() {
+        let output = std::env::temp_dir().join(format!("chirrp-deadline-{}", uuid::Uuid::new_v4()));
+        let mut server = Server::new(output.clone()).unwrap();
+        server.tool_timeout = Duration::from_millis(25);
+        let (transport, _client) = tokio::io::duplex(8192);
+        let service = rmcp::service::serve_directly(server.clone(), transport, None);
+        let context =
+            || RequestContext::new(rmcp::model::RequestId::Number(1), service.peer().clone());
+        let request = |name: &str, arguments: Value| {
+            serde_json::from_value::<CallToolRequestParams>(
+                json!({"name":name,"arguments":arguments}),
+            )
+            .unwrap()
+        };
+
+        let guard = server.worker.lock().await;
+        let result = server
+            .call_tool(
+                request("generate_sound", json!({"kind":"ui_click"})),
+                context(),
+            )
+            .await
+            .unwrap();
+        let result = serde_json::to_value(rmcp::model::ServerResult::from(result)).unwrap();
+        assert_eq!(result["isError"], true);
+        assert!(result.to_string().contains("timed out while queued"));
+        assert_eq!(server.capacity.available_permits(), MAX_TOOL_CALLS);
+        drop(guard);
+
+        let result = server
+            .call_tool(
+                request(
+                    "mix_sounds",
+                    json!({
+                        "recipes":vec![Recipe::new(SoundKind::Thunder, 42); 32],"sample_rate":96000
+                    }),
+                ),
+                context(),
+            )
+            .await
+            .unwrap();
+        let result = serde_json::to_value(rmcp::model::ServerResult::from(result)).unwrap();
+        assert_eq!(result["isError"], true);
+        assert!(result.to_string().contains("timed out;"));
+        server.finish_work().await;
+        assert_eq!(server.capacity.available_permits(), MAX_TOOL_CALLS);
+        assert_eq!(fs::read_dir(&output).unwrap().count(), 0);
+        service.cancel().await.unwrap();
+        fs::remove_dir_all(output).unwrap();
+    }
 }

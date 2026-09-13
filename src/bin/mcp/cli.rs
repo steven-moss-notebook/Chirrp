@@ -1,4 +1,5 @@
 //! Installed CLI and locally managed Streamable HTTP server.
+use super::security;
 use super::server::{MAX_REQUEST, Result, Server, serve_stdio};
 use axum::{Router, extract::Request, http::StatusCode, routing::post};
 use rmcp::transport::streamable_http_server::{
@@ -25,6 +26,8 @@ stop shuts down the background server for this user.
 stdio runs in the foreground for agents that launch their own subprocess.
 Output defaults to ./chirrp-output; --output-dir is a compatibility alias.
 Set CHIRRP_MCP_STATE_DIR to manage a separate instance (use a different port).
+Set CHIRRP_MCP_AUTH_TOKEN to require a bearer token for HTTP (32–256 characters).
+Authentication is optional, local-only, and does not apply to stdio or stop.
 Cargo install: cargo install --path . --locked --features mcp --bin chirrp-mcp";
 
 #[derive(Serialize, Deserialize)]
@@ -75,6 +78,7 @@ pub fn run() -> Result<()> {
         }
     }
     if command == "start" {
+        security::auth_token()?;
         return start(&output, port);
     }
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -220,6 +224,7 @@ fn stop() -> Result<()> {
 }
 
 async fn serve_http(output: PathBuf, port: u16) -> Result<()> {
+    let auth_token = security::auth_token()?;
     let state = state_dir()?;
     // Keep the file (and therefore the cross-process lock) open until shutdown.
     let lock = private_file(&state.join("server.lock"))?;
@@ -245,27 +250,30 @@ async fn serve_http(output: PathBuf, port: u16) -> Result<()> {
         port: address.port(),
         token: uuid::Uuid::new_v4().to_string(),
     };
-    let authorization = format!("Bearer {}", instance.token);
+    let shutdown_token = instance.token.clone();
     let shutdown = cancellation.clone();
-    let router = Router::new().nest_service("/mcp", service).route(
-        "/_shutdown",
-        post(move |request: Request| {
-            let authorized = request
-                .headers()
-                .get("authorization")
-                .and_then(|header| header.to_str().ok())
-                == Some(authorization.as_str())
-                && !request.headers().contains_key("origin");
-            let shutdown = shutdown.clone();
-            async move {
-                if !authorized {
-                    return StatusCode::FORBIDDEN;
+    let router = Router::new()
+        .nest_service("/mcp", service)
+        .route(
+            "/_shutdown",
+            post(move |request: Request| {
+                let authorized = security::authorized(request.headers(), &shutdown_token)
+                    && request.headers().get("host").and_then(|h| h.to_str().ok())
+                        == Some(address.to_string().as_str())
+                    && !request.headers().contains_key("origin");
+                let shutdown = shutdown.clone();
+                async move {
+                    if !authorized {
+                        return StatusCode::FORBIDDEN;
+                    }
+                    shutdown.cancel();
+                    StatusCode::ACCEPTED
                 }
-                shutdown.cancel();
-                StatusCode::ACCEPTED
-            }
-        }),
-    );
+            }),
+        )
+        .layer(axum::middleware::from_fn(move |request, next| {
+            security::protect(request, next, auth_token.clone())
+        }));
     let mut record = private_file(&state.join("server.json"))?;
     record.set_len(0)?;
     serde_json::to_writer(&mut record, &instance)?;
