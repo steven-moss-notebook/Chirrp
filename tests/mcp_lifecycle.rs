@@ -16,6 +16,8 @@ impl Instance {
     fn new() -> Self {
         Self {
             directory: std::env::temp_dir()
+                .canonicalize()
+                .unwrap()
                 .join(format!("chirrp-http-test-{}", uuid::Uuid::new_v4())),
             port: 0,
         }
@@ -93,9 +95,13 @@ impl Instance {
             "io.modelcontextprotocol/clientInfo": {"name":"lifecycle-test","version":"1"},
             "io.modelcontextprotocol/clientCapabilities": {}
         });
+        let mut headers = format!("MCP-Protocol-Version: 2026-07-28\r\nMcp-Method: {method}\r\n");
+        if let Some(name) = params["name"].as_str() {
+            headers.push_str(&format!("Mcp-Name: {name}\r\n"));
+        }
         let (status, body) = self.http(
             "/mcp",
-            "MCP-Protocol-Version: 2026-07-28\r\n",
+            &headers,
             &json!({"jsonrpc":"2.0","id":1,"method":method,"params":params}).to_string(),
         );
         assert_eq!(status, 200, "{body}");
@@ -123,7 +129,10 @@ fn background_http_generate_stop_and_restart() {
     let mut instance = Instance::new();
     instance.start();
     let discovery = instance.request("server/discover", json!({}));
-    assert_eq!(discovery["serverInfo"]["name"], "chirrp");
+    assert_eq!(
+        discovery["_meta"]["io.modelcontextprotocol/serverInfo"]["name"],
+        "chirrp"
+    );
     assert_eq!(
         instance.request("tools/list", json!({}))["tools"]
             .as_array()
