@@ -112,9 +112,7 @@ fn rate() -> Value {
     json!({"type":"integer","minimum":22050,"maximum":96000,"default":48000,"description":"Output sample rate in Hz. 48000 is recommended."})
 }
 
-/// Definitions for separate callable tools. JS handlers are in wasm/tools.js.
-/// Binary tools return typed arrays to the host, never a large JSON PCM list.
-pub fn tool_definitions() -> Vec<ToolDefinition> {
+pub(crate) fn edits_schema() -> Value {
     let mut edits = object(
         json!({
             "pitch_hz":number("Base pitch in Hz. Lower for weight; higher for bright UI sounds.",35.,4000.),
@@ -130,6 +128,13 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
         &[],
     );
     edits["minProperties"] = json!(1);
+    edits
+}
+
+/// Definitions for session tools plus additive stateless asset tools.
+/// JS handlers are in wasm/tools.js; binary results are typed arrays.
+pub fn tool_definitions() -> Vec<ToolDefinition> {
+    let edits = edits_schema();
     let entries = [
         (
             "random_sound",
@@ -214,5 +219,6 @@ pub fn tool_definitions() -> Vec<ToolDefinition> {
             description,
             input_schema,
         })
+        .chain(crate::asset_tool_definitions())
         .collect()
 }

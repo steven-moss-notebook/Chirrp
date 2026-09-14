@@ -1,9 +1,11 @@
 //! Versioned Foley and environmental scenes. Independently seeded layers
 //! share a physical gesture, with moving detail around a mono-compatible body.
+mod space;
 use crate::design::{Voice, bake_voice};
 use crate::{Recipe, Result, SoundKind};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
+pub(crate) use space::Room as SpaceRoom;
 
 struct Layer {
     voice: Voice,
@@ -116,10 +118,164 @@ impl Scene<'_> {
             );
         }
     }
+
+    fn gull_partials(
+        &mut self,
+        hz: f32,
+        at: f32,
+        decay: f32,
+        level: f32,
+        pan: f32,
+        sweep: f32,
+        harmonic: f32,
+    ) {
+        let g = &self.recipe.genome;
+        let attack = g.envelope.attack_s.clamp(0.005, 0.012);
+        let amp = g.tone.amplitude * level;
+        let fund = hz.clamp(35., 4000.);
+        let nasal = (1800. * (fund / 1100.).sqrt()).clamp(1600., 2200.);
+        let second = (fund * 2.007).min(4000.);
+        let third = (fund * 2.964).min(4000.);
+        let glide = if sweep.abs() > 1e-4 { decay * 0.8 } else { 0. };
+        let low = ((fund - 780.) / 180.).clamp(0., 1.);
+        self.add(
+            Voice::tone(fund, at, attack, decay, amp * low)
+                .sweep(sweep)
+                .glide(glide),
+            pan,
+            pan,
+        );
+        self.add(
+            Voice::tone(
+                nasal,
+                at,
+                attack,
+                decay * 0.8,
+                amp * (0.14 + g.texture * 0.06) * harmonic,
+            )
+            .sweep(sweep * 0.35)
+            .glide(glide)
+            .band(nasal, 0.55),
+            pan,
+            pan,
+        );
+        self.add(
+            Voice::tone(
+                second,
+                at,
+                attack,
+                decay * 0.75,
+                amp * (0.16 + g.texture * 0.06) * harmonic,
+            )
+            .sweep(sweep * 0.6)
+            .glide(glide)
+            .band(second.clamp(1400., 2600.), 0.55),
+            pan,
+            pan,
+        );
+        self.add(
+            Voice::tone(
+                third,
+                at,
+                attack,
+                decay * 0.55,
+                amp * (0.05 + g.texture * 0.03) * harmonic,
+            )
+            .sweep(sweep * 0.4)
+            .glide(glide)
+            .band(third.clamp(2400., 3800.), 0.5),
+            pan,
+            pan,
+        );
+    }
+
+    fn gull_rasp(&mut self, at: f32, decay: f32, level: f32, pan: f32, formants: bool) {
+        let g = &self.recipe.genome;
+        let n = level * g.noise.gain;
+        self.add(
+            Voice::noise(at, 0.003, decay, n, 4500.).band(2000., 0.5),
+            pan,
+            pan,
+        );
+        self.add(
+            Voice::noise(at, 0.002, decay * 0.4, n * 0.32, 5000.).band(3400., 0.55),
+            pan,
+            pan,
+        );
+        if formants {
+            let mv = self.rng.random_range(0.96..1.04);
+            for (hz, gain) in [(1700., 0.32), (2500., 0.2), (3500., 0.12)] {
+                self.add(
+                    Voice::noise(at, 0.003, decay * 0.7, n * gain, 5000.).band(hz * mv, 0.5),
+                    pan,
+                    pan,
+                );
+            }
+        }
+    }
+}
+
+fn cry_gain(t: f32) -> f32 {
+    const PTS: [(f32, f32); 11] = [
+        (0.00, 0.45),
+        (0.08, 0.60),
+        (0.14, 0.35),
+        (0.18, 0.30),
+        (0.22, 1.00),
+        (0.30, 0.90),
+        (0.38, 0.72),
+        (0.44, 0.82),
+        (0.52, 0.60),
+        (0.60, 0.25),
+        (0.66, 0.00),
+    ];
+    if t <= PTS[0].0 {
+        return PTS[0].1;
+    }
+    if t >= PTS[PTS.len() - 1].0 {
+        return 0.;
+    }
+    for pair in PTS.windows(2) {
+        if t <= pair[1].0 {
+            let u = (t - pair[0].0) / (pair[1].0 - pair[0].0);
+            return pair[0].1 + (pair[1].1 - pair[0].1) * u;
+        }
+    }
+    0.
+}
+
+fn tone_tail(t: f32) -> f32 {
+    if t < 0.52 {
+        1.
+    } else if t >= 0.66 {
+        0.
+    } else {
+        (1. - (t - 0.52) / 0.14).powi(2)
+    }
+}
+
+fn gull_hz(base: f32, ps: f32, drift: f32) -> f32 {
+    base * ps * (1. + drift)
 }
 
 pub(crate) fn dry(recipe: &Recipe, sr: u32) -> Result<(Vec<f32>, Vec<f32>)> {
+    if recipe.version >= 7 && recipe.kind.is_space() {
+        return Ok(space::dry(recipe, sr));
+    }
     use SoundKind::*;
+    if recipe.kind.is_bed() {
+        let g = &recipe.genome;
+        let frames = ((g.envelope.attack_s + g.envelope.decay_s + g.envelope.release_s) * sr as f32)
+            .ceil() as usize;
+        return Ok((bed(recipe, sr, frames, false), Vec::new()));
+    }
+    if recipe.version >= 5 {
+        match recipe.kind {
+            Seagull => return Ok((crate::natural::gull(recipe, sr), Vec::new())),
+            CarEngineRumble => return Ok((crate::natural::engine(recipe, sr), Vec::new())),
+            _ => {}
+        }
+    }
     let g = &recipe.genome;
     let d = g.envelope.decay_s;
     let a = g.envelope.attack_s;
@@ -373,6 +529,43 @@ pub(crate) fn dry(recipe: &Recipe, sr: u32) -> Result<(Vec<f32>, Vec<f32>)> {
                 s.air(at, 0.08, d * 0.65, gain * 0.18, 650., (pan, -pan));
             }
         }
+        CarEngineRumble => {
+            // Classic V8 idle: lumpy exhaust burble. No sustained sine drone
+            // (that reads as a spaceship) and no long air pad.
+            let interval_scale = (80. / f).clamp(0.75, 1.35);
+            let gaps = [
+                0.092 * interval_scale,
+                0.055 * interval_scale,
+                0.108 * interval_scale,
+                0.05 * interval_scale,
+            ];
+            let lumps = [1.0, 0.58, 0.86, 0.42];
+            let mut t = a.max(0.02);
+            let pulses = ((d * 0.92) / 0.075).floor().clamp(18., 36.) as usize;
+            for i in 0..pulses {
+                let lump = lumps[i % 4];
+                let low = 70. * s.rng.random_range(0.92..1.08);
+                let mid = 190. * s.rng.random_range(0.88..1.12);
+                let thud = f * s.rng.random_range(0.96..1.04);
+                s.add(
+                    Voice::noise(t, 0.012, 0.07, 1.05 * lump * g.noise.gain, 260.).band(low, 1.05),
+                    0.,
+                    0.,
+                );
+                s.add(
+                    Voice::noise(t, 0.01, 0.05, (0.4 + x * 0.25) * lump * g.noise.gain, 900.)
+                        .band(mid, 0.85),
+                    0.,
+                    0.,
+                );
+                s.add(
+                    Voice::tone(thud, t, 0.008, 0.045, 0.32 * lump * g.body.gain),
+                    0.,
+                    0.,
+                );
+                t += gaps[i % 4] + s.rng.random_range(-0.004..0.004);
+            }
+        }
         Dodge => {
             s.air(0., a, d, 1.3, 5200., (-0.9, 0.9));
             s.body(a, d * 0.6, 2.2);
@@ -409,6 +602,220 @@ pub(crate) fn dry(recipe: &Recipe, sr: u32) -> Result<(Vec<f32>, Vec<f32>)> {
                 s.air(at, 0.005, 0.045, 0.12, 6500., (pan, pan));
             }
         }
+        Seagull => {
+            // One short kya, then a single AAH with two irregular pressure
+            // changes. Rasp is concentrated on the main onset and the tail.
+            let ts = (d / 0.62).clamp(0.85, 1.15);
+            let ps = (f / 1100. * s.rng.random_range(0.94..1.07)).clamp(0.9, 1.12);
+            let pan = s.rng.random_range(-0.06..0.06);
+            let phrase = [
+                (0.00, 1250., 0.14, 950. / 1250. - 1., 1.0, 0.01),
+                (0.08, 950., 0.16, 1250. / 950. - 1., 1.0, 0.01),
+                (0.22, 1050., 0.24, 1100. / 1050. - 1., 1.0, 0.018),
+                (0.44, 900., 0.16, 0.08, 0.7, 0.02),
+            ];
+            for (at, hz, decay, sweep, harmonic, jitter) in phrase {
+                let t = at * ts;
+                let drift = s.rng.random_range(-jitter..jitter);
+                s.gull_partials(
+                    gull_hz(hz, ps, drift),
+                    t,
+                    decay * ts,
+                    cry_gain(at) * tone_tail(at),
+                    pan,
+                    sweep,
+                    harmonic,
+                );
+            }
+            s.gull_rasp(0.00 * ts, 0.055 * ts, 0.55, pan, false);
+            s.gull_rasp(0.18 * ts, 0.12 * ts, 1.45, pan, true);
+            s.gull_rasp(0.24 * ts, 0.14 * ts, 1.55, pan, true);
+            s.gull_rasp(0.32 * ts, 0.1 * ts, 1.15, pan, false);
+            s.gull_rasp(0.56 * ts, 0.12 * ts, 0.95, pan, false);
+            s.gull_rasp(0.61 * ts, 0.09 * ts, 0.7, pan, false);
+        }
+        PlasmaPulse => {
+            s.tone(1., 0., d, 0.85, 0.25, 0.);
+            s.tone(2.73, 0., d * 0.35, 0.35, -0.1, 0.);
+            s.tone(0.5, 0.004, d * 0.7, 0.65, 0.15, 0.);
+            s.contact(0., 0.018, 1.1, 3800., 0.);
+            s.air(0.012, 0.008, d * 0.4, 0.7, 5200., (-0.2, 0.2));
+        }
+        HeavySlug => {
+            s.body(0., d, 5.);
+            s.contact(0., 0.025, 2.5, 2100., 0.);
+            s.tone(1., 0., d * 0.55, 1.1, 0.2, 0.);
+            s.tone(5.31, 0.008, d * 0.3, 0.35, 0., 0.);
+            s.grains(4, 0.09, 0.03, 3200., x);
+            s.body(0.055, d * 0.45, 1.5);
+        }
+        BeamIgnite => {
+            s.add(
+                Voice::tone(f, 0., a, d * 0.45, 0.7).sweep(-0.65).glide(a),
+                0.,
+                0.,
+            );
+            s.add(
+                Voice::tone(f * 2.01, 0., a, d * 0.4, x * 0.4)
+                    .sweep(-0.6)
+                    .glide(a),
+                -0.3,
+                0.3,
+            );
+            s.contact(a, 0.025, 1.4, 4500., 0.);
+            s.body(a, d * 0.5, 1.7);
+            s.air(a, 0.008, d, 1.2, 7000., (-0.3, 0.3));
+        }
+        ArcZap => {
+            for i in 0..5 {
+                let at = i as f32 * d * 0.12 + s.rng.random_range(0.0..0.008);
+                let ratio = s.rng.random_range(0.8..2.8);
+                s.contact(at, 0.009, 1.7 / (1. + i as f32 * 0.2), 6500., 0.);
+                s.tone(ratio, at, d * 0.18, 0.55, 0.9, 0.);
+            }
+            s.body(0., 0.05, 0.7);
+        }
+        RocketLaunch => {
+            s.contact(0., 0.018, 1.3, 2400., 0.);
+            s.air(0.015, a, d, 2.2, 3400., (0., 0.4));
+            s.body(0.02, d, 3.);
+            s.add(
+                Voice::tone(f * 2., 0.025, a, d, 0.5)
+                    .sweep(-0.45)
+                    .glide(d * 0.8),
+                0.,
+                0.3,
+            );
+            s.grains(12, d * 0.5, 0.025, 4500., x * 0.35);
+        }
+        EnergyShield => {
+            for (ratio, gain) in [(1., 0.6), (1.5, 0.35), (2.01, 0.22), (3.02, 0.1)] {
+                s.add(
+                    Voice::tone(f * ratio, 0., a, d, gain).sweep(-0.2).glide(a),
+                    -0.2,
+                    0.2,
+                );
+            }
+            s.contact(0., 0.015, 0.4, 5800., 0.);
+            s.air(0., a, d * 0.6, 0.5, 6500., (-0.4, 0.4));
+        }
+        Ricochet => {
+            s.contact(0., 0.012, 1.7, 5500., 0.);
+            s.tone(1., 0.003, d, 0.65, 1.1, -0.3);
+            s.tone(1.417, 0.003, d * 0.55, 0.4, 0.8, 0.3);
+            s.air(0.012, 0.002, d * 0.4, 0.4, 8000., (-0.4, 0.5));
+        }
+        WeakPoint => {
+            s.contact(0., 0.012, 1., 4200., 0.);
+            s.tone(1., 0., d * 0.7, 0.65, 0., 0.);
+            s.tone(1.5, 0.025, d, 0.5, 0., 0.);
+            s.tone(3., 0., d * 0.2, 0.15, 0., 0.);
+            s.body(0., 0.09, 0.7);
+        }
+        ExpandingRing => {
+            s.air(0., a, d, 1.7, 3200., (0., 0.8));
+            s.add(Voice::tone(f, 0., a, d, 0.9).sweep(-0.45).glide(d), 0., 0.);
+            s.add(Voice::tone(f * 3.01, 0.04, a, d * 0.8, x * 0.4), 0., -0.8);
+            s.air(a, 0.04, d * 0.8, 0.7, 6500., (0., -0.7));
+        }
+        Thruster => {
+            s.body(0., d * 0.7, 3.5);
+            s.air(0., a, d, 1.8, 3800., (0., 0.3));
+            s.tone(1., 0., d, 0.85, 0.55, 0.);
+            s.tone(3.17, 0., d * 0.45, 0.25, 0.3, 0.);
+            s.grains(7, d * 0.4, 0.015, 6000., x * 0.5);
+        }
+        DebrisClatter => {
+            s.body(0., d * 0.4, 2.);
+            for i in 0..11 {
+                let at = (i as f32 / 11.).powf(0.7) * d;
+                let ratio = s.rng.random_range(0.5..4.);
+                let pan = s.rng.random_range(-0.6..0.6);
+                s.contact(at, 0.025, 1.2 / (1. + i as f32 * 0.12), 2800., pan);
+                s.tone(ratio, at, d * 0.18, 0.4, 0., pan);
+                s.tone(ratio * 2.71, at, d * 0.12, 0.2, 0., pan);
+            }
+        }
+        FreezeCone => {
+            s.air(0., a, d * 0.45, 0.7, 6500., (-0.3, 0.3));
+            s.add(
+                Voice::tone(f, 0., a, d * 0.45, 0.3).sweep(-0.5).glide(a),
+                0.,
+                0.,
+            );
+            s.contact(a, 0.025, 1.7, 7500., 0.);
+            s.air(a, 0.008, d * 0.6, 1.2, 9000., (0., 0.7));
+            s.grains(18, a + d * 0.65, 0.025, 6500., x * 0.6);
+        }
+        IceShatter => {
+            s.contact(0., 0.018, 2., 7500., 0.);
+            for _ in 0..13 {
+                let at = s.rng.random_range(0.0..1.0) * d * 0.65;
+                let ratio = s.rng.random_range(0.6..2.8);
+                let pan = s.rng.random_range(-0.7..0.7);
+                s.tone(ratio, at, d * 0.15, 0.28, 0.08, pan);
+                s.contact(at, 0.012, 0.45, 8500., pan);
+            }
+            s.body(0., 0.06, 0.6);
+        }
+        AnvilPulse => {
+            s.body(0., d * 0.6, 4.);
+            s.contact(0., 0.022, 2., 3400., 0.);
+            for (ratio, gain) in [(1., 0.9), (2.76, 0.5), (5.4, 0.3), (8.93, 0.16)] {
+                s.tone(ratio, 0., d / ratio.sqrt(), gain, 0., 0.);
+            }
+            s.contact(0.055, 0.018, 0.45, 2400., 0.2);
+        }
+        TissueWet => {
+            s.body(0., d * 0.7, 2.5);
+            s.air(0., a, d * 0.6, 0.65, 1700., (-0.1, 0.1));
+            for i in 0..8 {
+                let at = s.rng.random_range(0.0..1.0) * d * 0.75;
+                let ratio = s.rng.random_range(0.7..3.);
+                s.tone(ratio, at, 0.055, 0.5, 1.2, 0.);
+                s.contact(at, 0.035, 0.7, 1400., 0.);
+                if i % 2 == 0 {
+                    s.air(at, 0.012, 0.075, 0.5, 2800., (-0.2, 0.2));
+                }
+            }
+        }
+        ScrapCreature => {
+            s.air(0., 0.08, d * 0.4, 0.5, 1200., (-0.2, 0.2));
+            s.tone(1., 0., d * 0.55, 0.5, -0.3, 0.);
+            s.tone(2.83, 0., d * 0.35, 0.35, -0.25, 0.);
+            s.grains(14, d * 0.85, 0.035, 3600., x);
+            s.body(d * 0.4, d * 0.45, 3.);
+            s.contact(d * 0.4, 0.035, 1.5, 2200., 0.);
+        }
+        VoidHowl => {
+            for (ratio, gain) in [(0.5, 0.7), (1., 0.8), (1.49, 0.3), (4.7, 0.2), (8.2, 0.1)] {
+                s.add(
+                    Voice::tone(f * ratio, 0., a, d * 0.75, gain)
+                        .sweep(-0.3)
+                        .glide(d),
+                    -0.2,
+                    0.2,
+                );
+            }
+            s.air(0., a, d * 0.8, 0.9, 1300., (-0.5, 0.5));
+            s.body(d * 0.65, d * 0.25, 2.5);
+        }
+        SirenLock => {
+            for i in 0..4 {
+                let at = i as f32 * d * 0.19;
+                s.tone(
+                    if i % 2 == 0 { 1. } else { 1.25 },
+                    at,
+                    d * 0.14,
+                    0.6,
+                    0.,
+                    0.,
+                );
+                s.tone(2., at, d * 0.08, 0.16, 0., 0.);
+            }
+            s.contact(d * 0.78, 0.015, 0.8, 4200., 0.);
+            s.tone(1.5, d * 0.78, d * 0.22, 0.6, 0., 0.);
+        }
         _ => unreachable!("only cinematic categories use the scene renderer"),
     }
     let duration = s
@@ -441,4 +848,126 @@ pub(crate) fn dry(recipe: &Recipe, sr: u32) -> Result<(Vec<f32>, Vec<f32>)> {
         }
     }
     Ok((mid, side))
+}
+
+/// Continuous space machinery and faction voices. Each arrangement has its own
+/// oscillator ratios, noise bands, and modulation; none uses the laser patch.
+pub(crate) fn bed(recipe: &Recipe, sr: u32, frames: usize, continuous: bool) -> Vec<f32> {
+    use SoundKind::*;
+    use std::f32::consts::TAU;
+    let g = &recipe.genome;
+    let rate = sr as f32;
+    let mut rng = ChaCha8Rng::seed_from_u64(recipe.seed as u64);
+    let drift = rng.random_range(0.97..1.03);
+    let offset = rng.random_range(0.0..TAU);
+    let f = g.tone.freq_hz * drift;
+    let mut phase = (g.tone.phase_offset * TAU) as f64;
+    let (mut low, mut broad, mut throat, mut color1, mut color2) = (0., 0., 0., 0., 0.);
+    let coeff = |hz: f32| 1. - (-TAU * hz.min(rate * 0.4) / rate).exp();
+    let c_low = coeff(180.);
+    let c_broad = coeff(6500.);
+    let c_throat = coeff(1100.);
+    let c_color = coeff(g.filter.cutoff_hz);
+    let mut out = Vec::with_capacity(frames);
+    for i in 0..frames {
+        let t = i as f32 / rate;
+        let breath = (TAU * 0.23 * t + offset).sin();
+        let flutter = (TAU * 7.3 * t + offset).sin();
+        phase += (TAU * f * (1. + 0.003 * breath) / rate) as f64;
+        // Suppress partials before they approach Nyquist at extreme pitch edits.
+        let tone = |ratio: f32| {
+            if f * ratio < rate * 0.4 {
+                (phase * ratio as f64).sin() as f32
+            } else {
+                0.
+            }
+        };
+        let white = rng.random_range(-1.0..1.0);
+        low += c_low * (white - low);
+        broad += c_broad * (white - broad);
+        throat += c_throat * (white - throat);
+        let hiss = broad - throat;
+        let hollow = throat - low;
+        let n = g.noise.gain;
+        let b = g.body.gain;
+        let a = g.tone.amplitude;
+        let x = g.texture;
+        let signal = match recipe.kind {
+            BeamLoop => {
+                a * (tone(1.) * 0.35 + tone(2.01) * 0.2 + tone(3.) * x * 0.12)
+                    * (0.85 + 0.15 * flutter)
+                    + n * hollow * 0.7
+                    + n * hiss * x * 0.18
+                    + b * tone(0.5) * 0.14
+            }
+            GravityDrone => {
+                b * (tone(1.) * 0.38 + tone(0.5) * 0.22)
+                    + a * (tone(1.013) * 0.22 + tone(2.49) * x * 0.12) * (0.75 + 0.25 * breath)
+                    + n * low * 1.5
+            }
+            HullRumble => {
+                b * low * 3.5
+                    + a * (tone(1.) * 0.2 + tone(1.43) * 0.14 + tone(2.87) * x * 0.1)
+                        * (0.8 + 0.2 * breath)
+                    + n * hollow * 0.18
+            }
+            VacuumLoop => {
+                n * (hollow * 1.6 + hiss * 0.12) * (0.85 + 0.15 * breath)
+                    + a * (tone(1.) + tone(1.98) * 0.3) * (0.12 + x * 0.05 * flutter)
+                    + b * low
+            }
+            MagnetPulse => {
+                let cycle = (TAU * 1.2 * t + offset).sin();
+                let slap = cycle.abs().powi(28);
+                b * tone(1.) * (0.16 + 0.22 * cycle.abs())
+                    + a * tone(2.01) * x * 0.15 * cycle
+                    + n * hollow * slap * 1.5
+                    + b * low * 0.6
+            }
+            FurnaceBed => {
+                n * (low * 2.5 + hollow * 0.65) * (0.85 + 0.15 * breath)
+                    + b * tone(1.) * 0.16
+                    + n * hiss * x * 0.15 * flutter.abs().powi(8)
+            }
+            NaniteHiss => {
+                let swarm = (TAU * 31.7 * t + 2. * breath).sin();
+                n * (hiss * 0.38 + hollow * 0.28) * (0.75 + x * 0.2 * swarm)
+                    + a * (tone(1.) * tone(0.03125)) * x * 0.035
+                    + b * low * 0.3
+            }
+            ChoirInterval => {
+                let hymn = tone(1.) * 0.3
+                    + tone(1.5) * 0.24
+                    + tone(2.) * 0.1
+                    + tone(3.) * x * 0.08
+                    + tone(4.5) * x * 0.035;
+                a * hymn * (0.85 + 0.1 * breath + 0.05 * flutter)
+                    + b * tone(0.5) * 0.22
+                    + n * hollow * 0.25
+            }
+            _ => unreachable!("only continuous kinds use the bed renderer"),
+        };
+        color1 += c_color * (signal - color1);
+        color2 += c_color * (color1 - color2);
+        let env = if continuous {
+            g.envelope.sustain_level
+        } else {
+            let attack = (t / g.envelope.attack_s).min(1.);
+            let progress = ((t - g.envelope.attack_s) / g.envelope.decay_s).clamp(0., 1.);
+            let decay =
+                g.envelope.sustain_level + (1. - g.envelope.sustain_level) * (-5. * progress).exp();
+            let release = if g.envelope.release_s > 0. {
+                ((frames - 1 - i) as f32 / (g.envelope.release_s * rate)).min(1.)
+            } else {
+                1.
+            };
+            attack * decay * release
+        };
+        out.push(color2 * env);
+    }
+    out
+}
+
+pub(crate) fn space_bed(recipe: &Recipe, sr: u32, frames: usize) -> (Vec<f32>, Vec<f32>) {
+    space::bed(recipe, sr, frames, true)
 }

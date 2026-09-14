@@ -9,6 +9,9 @@ import { tool_definitions } from './pkg/chirrp.js';
 export function createChirrpTools(engine, { publishAudio } = {}) {
   const parse = (json) => JSON.parse(json);
   const handlers = {
+    render_sound: (args) => audioResult('wav', engine.render_sound(JSON.stringify(args)), args.sample_rate ?? 48000, args.mono ? 1 : 2),
+    generate_loop: (args) => audioResult('wav', engine.generate_loop(JSON.stringify(args)), args.sample_rate ?? 48000, args.mono ? 1 : 2),
+    mix_layers: (args) => audioResult('wav', engine.mix_layers(JSON.stringify(args)), args.sample_rate ?? 48000, args.mono ? 1 : 2),
     random_sound: ({ seed = 42, population = 6 }) => parse(engine.random_sound(seed, population)),
     list_sounds: () => parse(engine.list_sounds()),
     create_sound: ({ kind, seed = 42, population = 6 }) => parse(engine.create_sound(kind, seed, population)),
@@ -22,8 +25,8 @@ export function createChirrpTools(engine, { publishAudio } = {}) {
     render_audio: ({ index, sample_rate = 48000 }) => audioResult('pcm_f32', engine.render_audio(index, sample_rate), sample_rate),
     export_wav: ({ index, sample_rate = 48000 }) => audioResult('wav', engine.export_wav(index, sample_rate), sample_rate),
   };
-  function audioResult(format, data, sample_rate) {
-    const result = { format, channels: 2, sample_rate, data };
+  function audioResult(format, data, sample_rate, channels = 2) {
+    const result = { format, channels, sample_rate, data };
     return publishAudio ? publishAudio(result) : result;
   }
   return Object.fromEntries(JSON.parse(tool_definitions()).map(definition => {
@@ -48,8 +51,11 @@ function validate(schema, value, path) {
     for (const key of schema.required ?? []) if (!Object.hasOwn(value, key)) throw new Error(`${path}.${key} is required`);
     if (Object.keys(value).length < (schema.minProperties ?? 0)) throw new Error(`${path} requires at least one control`);
     for (const [key, item] of Object.entries(value)) {
-      if (!Object.hasOwn(schema.properties, key)) throw new Error(`Unknown argument: ${path}.${key}`);
-      validate(schema.properties[key], item, `${path}.${key}`);
+      if (schema.properties && Object.hasOwn(schema.properties, key)) {
+        validate(schema.properties[key], item, `${path}.${key}`);
+      } else if (schema.additionalProperties === false) {
+        throw new Error(`Unknown argument: ${path}.${key}`);
+      }
     }
   } else if (schema.type === 'array') {
     if (!Array.isArray(value) || value.length < schema.minItems || value.length > schema.maxItems) throw new Error(`${path} has an invalid array length`);
@@ -58,6 +64,8 @@ function validate(schema, value, path) {
     if (typeof value !== 'number' || !Number.isFinite(value) || (schema.type === 'integer' && !Number.isInteger(value)) || value < schema.minimum || value > schema.maximum) {
       throw new Error(`${path} must be a ${schema.type} in [${schema.minimum}, ${schema.maximum}]`);
     }
+  } else if (schema.type === 'boolean') {
+    if (typeof value !== 'boolean') throw new Error(`${path} must be a boolean`);
   } else if (schema.type === 'string') {
     if (typeof value !== 'string' || (schema.enum && !schema.enum.includes(value))) throw new Error(`${path} must be one of: ${schema.enum?.join(', ')}`);
   } else { throw new Error(`Unsupported schema type: ${schema.type}`); }

@@ -2,7 +2,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
-import init, { Chirrp, render_recipe, render_mix } from '../wasm/pkg/chirrp.js';
+import init, { Chirrp, render_recipe, render_mix, render_loop, render_loop_with_options, render_with_options, render_mix_layers, render_mix_layers_with_options } from '../wasm/pkg/chirrp.js';
 
 await init({ module_or_path: await readFile(new URL('../wasm/pkg/chirrp_bg.wasm', import.meta.url)) });
 const engine = new Chirrp();
@@ -12,7 +12,7 @@ function invoke(command) {
   return response.result;
 }
 const catalog = invoke({ op: 'catalog' });
-assert.equal(catalog.length, 39);
+assert.equal(catalog.length, 66);
 for (const { kind } of catalog) {
   let session = invoke({ op: 'create', kind, seed: 42, population: 6 });
   const favorite = session.candidates[0];
@@ -96,3 +96,33 @@ assert.throws(() => render_mix(JSON.stringify(mixRecipes), 0));
 assert.throws(() => render_mix(JSON.stringify([{ ...mixRecipes[0], version: 99 }]), 24000));
 engine.free();
 console.log('WASM integration checks passed.');
+
+
+const additive = new Chirrp();
+additive.create_sound('beam_loop', 42, 2);
+const bedJson = additive.get_recipe(0);
+const bedPcm = render_loop(bedJson, 24000, 0.5);
+assert.equal(bedPcm.length, 24000);
+assert.deepEqual(bedPcm, render_loop_with_options(bedJson, 24000, 0.5, '{}'));
+const dryLoop = render_loop_with_options(bedJson, 24000, 0.5, '{"dry_mid":true}');
+for (let i = 0; i < dryLoop.length; i += 2) assert.equal(dryLoop[i], dryLoop[i+1]);
+additive.create_sound('plasma_pulse', 42, 2);
+const shotJson = additive.get_recipe(0);
+assert.deepEqual(render_recipe(shotJson, 24000), render_with_options(shotJson, 24000, '{}'));
+const layersJson = JSON.stringify([{ recipe: JSON.parse(shotJson), gain: 0.5, delay_s: 0.125 }]);
+assert.deepEqual(render_mix_layers(layersJson, 24000), render_mix_layers_with_options(layersJson, 24000, '{}'));
+const dryShot = render_with_options(shotJson, 24000, '{"dry_mid":true}');
+const dryMix = render_mix_layers_with_options(layersJson, 24000, '{"dry_mid":true}');
+assert.equal(dryMix.length, dryShot.length + 6000);
+for (let i = 0; i < dryShot.length; i++) assert.equal(dryMix[i+6000], dryShot[i]*0.5);
+additive.free();
+console.log('Additive WASM function exports passed.');
+
+// Frozen before the cinema redesign: every old default and saved v6 voice.
+const preCinema = JSON.parse(await readFile(new URL('../tests/fixtures/pre-cinema-bank.json', import.meta.url), 'utf8'));
+const preCinemaHashes = JSON.parse(await readFile(new URL('../tests/fixtures/pre-cinema-wasm.sha256.json', import.meta.url), 'utf8'));
+for (let i = 0; i < preCinema.length; i++) {
+  const pcm = render_recipe(JSON.stringify(preCinema[i]), 24000);
+  assert.equal(createHash('sha256').update(Buffer.from(pcm.buffer)).digest('hex'), preCinemaHashes[i].hash, preCinema[i].kind);
+}
+console.log('All 41 original presets and 26 saved v6 recipes retain exact WASM PCM hashes.');

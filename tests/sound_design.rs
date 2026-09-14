@@ -246,7 +246,7 @@ fn cinematic_scenes_round_trip_vary_and_stay_bounded_at_extreme_edits() {
         recipe.genome.drive = 4.;
         let extreme = render(&recipe, 22_050).unwrap();
         assert!(
-            extreme.metrics().duration_seconds < 6.,
+            extreme.metrics().duration_seconds < if recipe.version >= 7 { 9. } else { 6. },
             "{:?}: {:?}",
             entry.kind,
             extreme.metrics()
@@ -312,4 +312,74 @@ fn dodge_crosses_the_stereo_field_without_losing_its_mono_body() {
         mw += a * b;
     }
     assert!(mw / (mm * ww).sqrt() > 0.999_999);
+}
+
+#[test]
+fn car_idle_chugs_steadily_instead_of_cracking_like_thunder() {
+    let engine = render(&Recipe::new(SoundKind::CarEngineRumble, 42), 24_000).unwrap();
+    let thunder = render(&Recipe::new(SoundKind::Thunder, 42), 24_000).unwrap();
+    let energy = |audio: &chirrp::AudioBuffer, start: f32, end: f32| {
+        audio
+            .samples()
+            .chunks_exact(2)
+            .skip((start * 24_000.) as usize)
+            .take(((end - start) * 24_000.) as usize)
+            .map(|p| ((p[0] + p[1]) * 0.5).powi(2))
+            .sum::<f32>()
+    };
+    let roughness = |samples: &[f32], start: f32, end: f32| {
+        let mid: Vec<f32> = samples
+            .chunks_exact(2)
+            .skip((start * 24_000.) as usize)
+            .take(((end - start) * 24_000.) as usize)
+            .map(|p| (p[0] + p[1]) * 0.5)
+            .collect();
+        mid.windows(2).map(|w| (w[1] - w[0]).powi(2)).sum::<f32>()
+            / mid.iter().map(|v| v * v).sum::<f32>()
+    };
+    assert!(energy(&engine, 0.7, 1.3) > energy(&engine, 0.0, 0.12) * 0.45);
+    assert!(
+        spectral_centroid(engine.samples(), 0.4, 24_000.)
+            < spectral_centroid(thunder.samples(), 0.04, 24_000.) * 0.55
+    );
+    assert!(roughness(engine.samples(), 0.05, 0.2) < roughness(thunder.samples(), 0.0, 0.12) * 0.7);
+    let mut pulsy = Recipe::new(SoundKind::CarEngineRumble, 42);
+    pulsy.genome.tone.amplitude = 0.;
+    assert!(render(&pulsy, 24_000).unwrap().metrics().rms > 0.02);
+}
+
+#[test]
+fn seagull_is_a_harsh_kee_aww() {
+    let mut recipe = Recipe::new(SoundKind::Seagull, 42);
+    recipe.genome.room = 0.;
+    let cry = render(&recipe, 24_000).unwrap();
+    let birds = render(&Recipe::new(SoundKind::BirdChirps, 42), 24_000).unwrap();
+    let ring = render(&Recipe::new(SoundKind::Ring, 42), 24_000).unwrap();
+    let seconds = cry.metrics().duration_seconds;
+    assert!(
+        (0.55..1.35).contains(&seconds),
+        "seagull duration {seconds}"
+    );
+    let early = spectral_centroid(cry.samples(), 0.04, 24_000.);
+    assert!(early > 800. && early < 2600., "kya centroid {early}");
+    let energy = |start: f32, end: f32| {
+        cry.samples()
+            .chunks_exact(2)
+            .skip((start * 24_000.) as usize)
+            .take(((end - start) * 24_000.) as usize)
+            .map(|p| ((p[0] + p[1]) * 0.5).powi(2))
+            .sum::<f32>()
+    };
+    assert!(energy(0.22, 0.40) > energy(0.00, 0.14) * 1.2);
+    assert!(early < spectral_centroid(birds.samples(), 0.02, 24_000.));
+    let roughness = |samples: &[f32]| {
+        let mid: Vec<f32> = samples
+            .chunks_exact(2)
+            .map(|p| (p[0] + p[1]) * 0.5)
+            .collect();
+        mid.windows(2).map(|w| (w[1] - w[0]).powi(2)).sum::<f32>()
+            / mid.iter().map(|v| v * v).sum::<f32>()
+    };
+    assert!(roughness(cry.samples()) > roughness(ring.samples()) * 1.3);
+    assert!(cry.metrics().stereo_correlation > 0.9);
 }

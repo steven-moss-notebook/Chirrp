@@ -249,7 +249,7 @@ fn background_http_generate_stop_and_restart() {
             .as_array()
             .unwrap()
             .len(),
-        14
+        17
     );
     instance.tool("create_sound", json!({"kind":"laser","seed":42}));
     let recipe = instance.tool("get_recipe", json!({"index":0}));

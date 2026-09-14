@@ -1,0 +1,1 @@
+{"version":4,"kind":"car_engine_rumble","seed":42,"genome":{"tone":{"freq_hz":80.0,"phase_offset":0.0,"amplitude":0.65},"envelope":{"attack_s":0.04,"decay_s":1.7,"sustain_level":0.0,"release_s":0.03,"curve":"Exponential"},"filter":{"cutoff_hz":1400.0,"q":0.707},"noise":{"gain":1.05},"body":{"gain":0.45},"sweep":0.0,"texture":0.4,"width":0.28,"room":0.04,"drive":1.2}}

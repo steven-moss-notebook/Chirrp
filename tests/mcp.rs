@@ -127,7 +127,7 @@ fn stdio_lifecycle_discovery_and_protocol_errors() {
     client.initialize();
     let tools = client.request("tools/list", json!({}));
     let tools = tools["result"]["tools"].as_array().unwrap();
-    assert_eq!(tools.len(), 14);
+    assert_eq!(tools.len(), 17);
     assert!(
         tools
             .iter()
@@ -156,7 +156,7 @@ fn stdio_lifecycle_discovery_and_protocol_errors() {
             .as_array()
             .unwrap()
             .len(),
-        39
+        66
     );
     assert_eq!(client.request("ping", json!({}))["result"], json!({}));
     assert_eq!(
@@ -391,4 +391,70 @@ fn invalid_or_oversized_frames_close_the_sdk_transport() {
             Err(mpsc::RecvTimeoutError::Disconnected)
         ));
     }
+}
+
+#[test]
+fn additive_asset_tools_export_loops_mono_and_reproducible_timed_layers() {
+    let mut client = Client::new();
+    client.initialize();
+    client.tool("create_sound", json!({"kind":"laser"}));
+    let before = client.tool("get_recipe", json!({"index":0}));
+    let result = client.tool("generate_loop", json!({
+        "kind":"hull_rumble","loop_s":0.5,"sample_rate":24000,"mono":true,"dry_mid":true,"name":"hull"
+    }));
+    assert_eq!(result["channels"], 1);
+    assert_eq!(result["frames"], 12000);
+    let wav = fs::read(result["path"].as_str().unwrap()).unwrap();
+    assert_eq!(&wav[44 + 24000..44 + 24004], b"smpl");
+    let sidecar: Value =
+        serde_json::from_slice(&fs::read(result["recipe_path"].as_str().unwrap()).unwrap())
+            .unwrap();
+    let restored = client.tool("render_sound", sidecar["render_sound"].clone());
+    assert_eq!(wav, fs::read(restored["path"].as_str().unwrap()).unwrap());
+    let shot = client.tool(
+        "render_sound",
+        json!({"recipe":before,"dry_mid":true,"mono":true}),
+    );
+    let sidecar: Value =
+        serde_json::from_slice(&fs::read(shot["recipe_path"].as_str().unwrap()).unwrap()).unwrap();
+    assert!(sidecar["render_sound"].get("loop_s").is_none());
+    let replay = client.tool("render_sound", sidecar["render_sound"].clone());
+    assert_eq!(
+        fs::read(shot["path"].as_str().unwrap()).unwrap(),
+        fs::read(replay["path"].as_str().unwrap()).unwrap()
+    );
+    let layers = client.tool("mix_layers", json!({
+        "layers":[{"recipe":before,"gain":0.5,"delay_s":0.2}],"sample_rate":24000,"mono":true,"dry_mid":true
+    }));
+    let sidecar: Value =
+        serde_json::from_slice(&fs::read(layers["recipe_path"].as_str().unwrap()).unwrap())
+            .unwrap();
+    assert!(
+        (sidecar["mix_layers"]["layers"][0]["delay_s"]
+            .as_f64()
+            .unwrap()
+            - 0.2)
+            .abs()
+            < 1e-6
+    );
+    let restored = client.tool("mix_layers", sidecar["mix_layers"].clone());
+    assert_eq!(
+        fs::read(layers["path"].as_str().unwrap()).unwrap(),
+        fs::read(restored["path"].as_str().unwrap()).unwrap()
+    );
+    for (name, args) in [
+        ("generate_loop", json!({"kind":"hull_rumble","loop_s":17})),
+        (
+            "generate_loop",
+            json!({"kind":"hull_rumble","loop_s":1,"mono":"yes"}),
+        ),
+        (
+            "mix_layers",
+            json!({"layers":[{"recipe":before,"delay_s":-1}]}),
+        ),
+        ("mix_layers", json!({"layers":[]})),
+    ] {
+        client.tool_error(name, args);
+    }
+    assert_eq!(before, client.tool("get_recipe", json!({"index":0})));
 }

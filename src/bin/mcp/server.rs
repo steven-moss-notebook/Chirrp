@@ -66,10 +66,15 @@ fn definitions() -> Result<Vec<Tool>> {
     }).collect();
     let name = json!({"type":"string","minLength":1,"maxLength":80,"pattern":"^[A-Za-z0-9_-]+$","description":"Optional asset directory label, using ASCII letters, digits, hyphens or underscores (1–80 characters). A numeric suffix prevents overwrites."});
     for tool in &mut tools {
-        if matches!(tool["name"].as_str(), Some("render_audio" | "export_wav")) {
-            tool["description"] = json!(
-                "Render a candidate to a local PCM16 stereo WAV and recipe sidecar. Returns absolute paths and audio metrics; no PCM arrays. Every call creates a new asset directory."
-            );
+        if matches!(
+            tool["name"].as_str(),
+            Some("render_audio" | "export_wav" | "render_sound" | "generate_loop" | "mix_layers")
+        ) {
+            if matches!(tool["name"].as_str(), Some("render_audio" | "export_wav")) {
+                tool["description"] = json!(
+                    "Render a candidate to a local PCM16 stereo WAV and recipe sidecar. Returns absolute paths and audio metrics; no PCM arrays. Every call creates a new asset directory."
+                );
+            }
             tool["inputSchema"]["properties"]["name"] = name.clone();
         }
     }
@@ -96,7 +101,15 @@ fn definitions() -> Result<Vec<Tool>> {
     for tool in &mut tools {
         if matches!(
             tool["name"].as_str(),
-            Some("generate_sound" | "mix_sounds" | "render_audio" | "export_wav")
+            Some(
+                "generate_sound"
+                    | "mix_sounds"
+                    | "render_audio"
+                    | "export_wav"
+                    | "render_sound"
+                    | "generate_loop"
+                    | "mix_layers"
+            )
         ) {
             tool["outputSchema"] = json!({"type":"object","additionalProperties":false,
                 "required":["path","recipe_path","format","sample_rate","channels","frames","metrics"],
@@ -110,6 +123,13 @@ fn definitions() -> Result<Vec<Tool>> {
                     },"additionalProperties":false}
                 }
             });
+            if matches!(
+                tool["name"].as_str(),
+                Some("render_sound" | "generate_loop" | "mix_layers")
+            ) {
+                tool["outputSchema"]["properties"]["channels"] =
+                    json!({"type":"integer","enum":[1,2]});
+            }
         } else if tool["name"] == "list_sounds" {
             tool["outputSchema"] = json!({"type":"object","required":["sounds"],"properties":{
                 "sounds":{"type":"array","items":{"type":"object","required":["kind","label","description"],"properties":{
@@ -321,6 +341,12 @@ impl Worker {
                 let audio = render(&recipe, arg(&args, "sample_rate")?)?;
                 self.save(&audio, &[recipe], &args, cancellation)?
             }
+            "render_sound" | "generate_loop" | "mix_layers" => {
+                let mut request = args.clone();
+                request.as_object_mut().unwrap().remove("name");
+                let asset = chirrp::execute_asset_tool(name, request)?;
+                self.save_asset(&asset, &args, cancellation)?
+            }
             "mix_sounds" => {
                 let recipes: Vec<Recipe> = arg(&args, "recipes")?;
                 for recipe in &recipes {
@@ -345,6 +371,43 @@ impl Worker {
         &self,
         audio: &AudioBuffer,
         recipes: &[Recipe],
+        args: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value> {
+        self.save_bytes(
+            audio,
+            audio.wav_bytes(),
+            2,
+            json!({
+                "sample_rate":audio.sample_rate(),"recipes":recipes
+            }),
+            args,
+            cancellation,
+        )
+    }
+
+    fn save_asset(
+        &self,
+        asset: &chirrp::RenderedAsset,
+        args: &Value,
+        cancellation: &CancellationToken,
+    ) -> Result<Value> {
+        self.save_bytes(
+            &asset.audio,
+            asset.wav_bytes(),
+            asset.channels(),
+            asset.sidecar.clone(),
+            args,
+            cancellation,
+        )
+    }
+
+    fn save_bytes(
+        &self,
+        audio: &AudioBuffer,
+        wav: Vec<u8>,
+        channels: u16,
+        sidecar: Value,
         args: &Value,
         cancellation: &CancellationToken,
     ) -> Result<Value> {
@@ -378,13 +441,8 @@ impl Worker {
         let recipe_path = directory.join("recipes.json");
         let write = || -> Result<()> {
             check_cancelled(cancellation)?;
-            fs::write(&wav_path, audio.wav_bytes())?;
-            fs::write(
-                &recipe_path,
-                serde_json::to_vec_pretty(&json!({
-                    "sample_rate":audio.sample_rate(),"recipes":recipes
-                }))?,
-            )?;
+            fs::write(&wav_path, &wav)?;
+            fs::write(&recipe_path, serde_json::to_vec_pretty(&sidecar)?)?;
             Ok(())
         };
         if let Err(error) = write() {
@@ -395,7 +453,7 @@ impl Worker {
         }
         Ok(
             json!({"path":wav_path,"recipe_path":recipe_path,"format":"wav","sample_rate":audio.sample_rate(),
-            "channels":audio.channels(),"frames":audio.frames(),"metrics":audio.metrics()}),
+            "channels":channels,"frames":audio.frames(),"metrics":if channels == 1 { audio.mono_metrics() } else { audio.metrics() }}),
         )
     }
 }
@@ -464,6 +522,11 @@ fn validate(schema: &Value, value: &mut Value, path: &str) -> Result<()> {
                 || schema["minimum"].as_f64().is_some_and(|min| number < min)
                 || schema["maximum"].as_f64().is_some_and(|max| number > max)
             {
+                return Err(invalid().into());
+            }
+        }
+        Some("boolean") => {
+            if !value.is_boolean() {
                 return Err(invalid().into());
             }
         }

@@ -15,13 +15,13 @@ fn random_sound_is_seeded_varied_and_atomic() {
         assert!(engine.random_sound(seed, 1).is_err());
         assert_eq!(engine.snapshot().unwrap(), state);
     }
-    assert_eq!(kinds.len(), 39);
+    assert_eq!(kinds.len(), 66);
 }
 
 #[test]
 fn typed_operations_work_without_commands_and_return_compact_state() {
     let mut engine = Engine::default();
-    assert_eq!(engine.list_sounds().len(), 39);
+    assert_eq!(engine.list_sounds().len(), 66);
     assert!(engine.list_candidates().is_err());
     let summary = engine.create_sound(SoundKind::Laser, 42, 6).unwrap();
     assert_eq!(summary.candidates.len(), 6);
@@ -92,7 +92,7 @@ fn edits_are_partial_atomic_and_strict() {
 #[test]
 fn tool_catalog_has_independent_discoverable_arguments() {
     let tools = tool_definitions();
-    assert_eq!(tools.len(), 12);
+    assert_eq!(tools.len(), 15);
     for tool in &tools {
         assert!(!tool.description.is_empty());
         assert_eq!(tool.input_schema["additionalProperties"], false);
@@ -104,7 +104,7 @@ fn tool_catalog_has_independent_discoverable_arguments() {
             .as_array()
             .unwrap()
             .len(),
-        39
+        66
     );
     let edit = tools.iter().find(|t| t.name == "edit_sound").unwrap();
     assert!(edit.input_schema["properties"].get("recipe").is_none());

@@ -1,17 +1,28 @@
 #![doc = include_str!("../README.md")]
+mod assets;
 mod cinematic;
 mod design;
 mod evolution;
 mod laser;
+mod natural;
 mod recipe;
 mod render;
 mod tools;
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
+pub use assets::{
+    LoopAssetRequest, MixAssetRequest, RenderedAsset, SoundAssetRequest, asset_tool_definitions,
+    execute_asset_tool, generate_loop_asset, render_mix_asset, render_sound_asset,
+};
+
 pub use evolution::{Command, Engine, Session};
 pub use recipe::{CatalogEntry, Genome, Recipe, SoundKind, catalog};
-pub use render::{AudioBuffer, AudioMetrics, mix, render, render_mix};
+pub use render::{
+    AudioBuffer, AudioMetrics, MixLayer, RenderOptions, mix, render, render_loop,
+    render_loop_with_options, render_mix, render_mix_layers, render_mix_layers_with_options,
+    render_with_options,
+};
 pub use symbios_audio;
 pub use tools::{CandidateSummary, SessionSummary, SoundEdits, ToolDefinition, tool_definitions};
 

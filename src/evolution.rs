@@ -163,6 +163,10 @@ fn offspring(a: &Recipe, b: &Recipe, strength: f32, rng: &mut impl Rng) -> Recip
     let mut child = a.clone();
     child.genome = a.genome.crossover(&b.genome, rng);
     child.genome.mutate(rng, strength);
+    if !child.kind.is_bed() {
+        child.genome.envelope.sustain_level = 0.;
+        child.genome.envelope.decay_s = child.genome.envelope.decay_s.min(2.);
+    }
     if child.version >= 2 && strength > 0. {
         // Upstream ADSR mutations use absolute time steps suitable for long
         // notes. Keep short UI/foley variations proportional to their parent.
@@ -174,7 +178,7 @@ fn offspring(a: &Recipe, b: &Recipe, strength: f32, rng: &mut impl Rng) -> Recip
         );
         g.envelope.decay_s = g.envelope.decay_s.clamp(
             (parent.envelope.decay_s * 0.8).max(0.025),
-            (parent.envelope.decay_s * 1.25).min(2.),
+            (parent.envelope.decay_s * 1.25).min(if child.kind.is_bed() { 16. } else { 2. }),
         );
         g.sweep = parent.sweep + (g.sweep - parent.sweep) * 0.25;
         g.texture = parent.texture + (g.texture - parent.texture) * 0.35;

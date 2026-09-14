@@ -33,7 +33,7 @@ fn every_preset_has_finite_audible_stereo_and_clean_edges() {
         assert_eq!(&audio.samples()[..2], &[0., 0.]);
         assert_eq!(&audio.samples()[audio.samples().len() - 2..], &[0., 0.]);
         assert_eq!(audio.channels(), 2);
-        assert!(m.duration_seconds < 6.);
+        assert!(m.duration_seconds < if entry.kind.is_bed() { 18.5 } else { 6. });
     }
 }
 

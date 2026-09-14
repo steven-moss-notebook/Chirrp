@@ -114,7 +114,7 @@ The server exposes 14 tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `list_sounds` | Discover the 39 presets and descriptions. |
+| `list_sounds` | Discover the 66 presets and descriptions. |
 | `generate_sound` | Generate and export a preset in one call, with optional edits. |
 | `create_sound`, `random_sound` | Start an editing session with 2–12 candidates. |
 | `list_candidates`, `select_candidate` | Inspect candidates and choose a favorite. |
@@ -167,3 +167,32 @@ cargo test --release --locked --features mcp --test mcp --test mcp_lifecycle
 These tests launch the real server process, exercise both SDK lifecycles, inspect tool annotations and structured results, generate and mix WAV files, reproduce saved recipes, and check validation, cancellation, overload rejection, protocol responsiveness during rendering, bounded framing, and non-overwriting exports.
 
 Lifecycle tests also start the background HTTP server, generate assets through MCP, verify editing state across requests, reject duplicate starts and invalid origins, stop it, and restart it. They exercise optional bearer authentication, invalid configuration, HTTP methods, challenge headers, credential separation, and secret redaction. These tests require permission to bind local loopback ports.
+
+
+## Additive space-bank tools
+
+The existing tools keep their input schemas and behavior. Three stateless tools
+share the library's asset request layer and never replace the editing session:
+
+| Tool | Inputs and result |
+| --- | --- |
+| `generate_loop` | `kind`, `loop_s`; optional `seed`, `sample_rate`, `dry_mid`, `mono`, `sustain_level`, and existing `edits`. Exports a seamless WAV with `smpl` metadata. |
+| `render_sound` | Complete `recipe`; optional `sample_rate`, `loop_s`, `dry_mid`, `mono`. Exports a saved recipe with the new controls. |
+| `mix_layers` | `layers: [{recipe, gain, delay_s}]`; optional `sample_rate`, `dry_mid`, `mono`. Exports a timed mix with shared 0.89 peak protection. |
+
+MCP adds optional `name` to these tools and returns the existing artifact shape,
+with `channels` equal to 1 for mono exports. The sidecar's `render_sound` or
+`mix_layers` object can be passed directly to that tool to reproduce the export.
+The old top-level `recipes` array is also retained, but that array alone omits
+gain, delay, loop duration, and export settings. Mono export metrics describe the
+mono downmix before PCM16 quantization.
+
+```json
+{"kind":"hull_rumble","seed":42,"loop_s":8,"sample_rate":48000,"dry_mid":true,"mono":true,"name":"cabin"}
+```
+
+The example above is a `generate_loop` call. For custom sustain/long decay, edit a
+bed recipe returned by `get_recipe` and pass it to `render_sound`; the old
+`edit_sound` tool schema retains its original controls and bounds. `generate_loop`
+also accepts `sustain_level` directly. See [space-bank.md](space-bank.md) for kinds
+and mix-only game cues.

@@ -22,6 +22,7 @@ pub(super) struct Voice {
     pub(super) cutoff: f32,
     pub(super) band: Option<(f32, f32)>,
     pub(super) sweep: f32,
+    pub(super) bend_s: f32,
 }
 impl Voice {
     pub(super) fn tone(hz: f32, at: f32, attack: f32, decay: f32, level: f32) -> Self {
@@ -34,6 +35,7 @@ impl Voice {
             cutoff: 6000.,
             band: None,
             sweep: 0.,
+            bend_s: 0.,
         }
     }
     pub(super) fn noise(at: f32, attack: f32, decay: f32, level: f32, cutoff: f32) -> Self {
@@ -46,6 +48,7 @@ impl Voice {
             cutoff,
             band: None,
             sweep: 0.,
+            bend_s: 0.,
         }
     }
     pub(super) fn band(mut self, hz: f32, q: f32) -> Self {
@@ -58,6 +61,10 @@ impl Voice {
     }
     pub(super) fn sweep(mut self, amount: f32) -> Self {
         self.sweep = amount;
+        self
+    }
+    pub(super) fn glide(mut self, seconds: f32) -> Self {
+        self.bend_s = seconds;
         self
     }
 }
@@ -98,7 +105,11 @@ pub(super) fn bake_voice(v: Voice, recipe: &Recipe, sr: u32) -> Result<Vec<f32>>
         2,
         N::Adsr(AdsrEnvelope {
             attack_s: 0.001,
-            decay_s: v.decay * 0.32,
+            decay_s: if v.bend_s > 1e-4 {
+                v.bend_s.clamp(0.02, v.decay.max(0.02))
+            } else {
+                v.decay * 0.32
+            },
             ..envelope
         }),
     )
@@ -149,7 +160,27 @@ pub(super) fn bake_voice(v: Voice, recipe: &Recipe, sr: u32) -> Result<Vec<f32>>
 /// a hover can never be normalized into a loud notification.
 pub(crate) fn mastering(recipe: &Recipe) -> (f32, f32) {
     use SoundKind::*;
+    if recipe.version >= 7 && recipe.kind.is_space() {
+        return match recipe.kind {
+            HeavySlug | AnvilPulse | ExpandingRing => (1.35, 0.89),
+            RocketLaunch | BeamIgnite => (1.25, 0.87),
+            PlasmaPulse | Thruster | ArcZap => (1.25, 0.8),
+            HullRumble | GravityDrone => (1.5, 0.52),
+            BeamLoop | MagnetPulse | FurnaceBed | VacuumLoop => (1.4, 0.58),
+            ChoirInterval => (1.65, 0.55),
+            NaniteHiss => (1.05, 0.26),
+            WeakPoint => (1.4, 0.78),
+            SirenLock => (1.35, 0.68),
+            _ => (1.35, 0.82),
+        };
+    }
     match recipe.kind {
+        HullRumble | GravityDrone => (1.4, 0.48),
+        BeamLoop | VacuumLoop | MagnetPulse | FurnaceBed => (1.3, 0.55),
+        NaniteHiss => (1., 0.24),
+        ChoirInterval => (1.25, 0.46),
+        HeavySlug | AnvilPulse => (1.6, 0.89),
+        WeakPoint | SirenLock => (1.1, 0.48),
         Wind if recipe.version >= 5 => (0.8, 0.18),
         Leaves if recipe.version >= 5 => (1.1, 0.3),
         Rustling if recipe.version >= 5 => (1.2, 0.4),
@@ -167,7 +198,9 @@ pub(crate) fn mastering(recipe: &Recipe) -> (f32, f32) {
         Whoosh => (1.1, 0.58),
         PowerUp => (0.85, 0.74),
         Thunder | Stomp | Drop => (1.65, 0.89),
+        CarEngineRumble => (3.4, 0.68),
         Ring | Waves | Wind => (1.45, 0.86),
+        Seagull => (1.35, 0.64),
         _ => (1.5, 0.82),
     }
 }

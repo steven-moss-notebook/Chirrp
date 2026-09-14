@@ -104,6 +104,16 @@ impl Chirrp {
     ) -> std::result::Result<Vec<u8>, JsValue> {
         self.engine.export_wav(index, sample_rate).map_err(js_error)
     }
+    /// Stateless asset exports; JSON arguments match the additive tool schemas.
+    pub fn render_sound(&self, args_json: &str) -> std::result::Result<Vec<u8>, JsValue> {
+        asset_wav("render_sound", args_json)
+    }
+    pub fn generate_loop(&self, args_json: &str) -> std::result::Result<Vec<u8>, JsValue> {
+        asset_wav("generate_loop", args_json)
+    }
+    pub fn mix_layers(&self, args_json: &str) -> std::result::Result<Vec<u8>, JsValue> {
+        asset_wav("mix_layers", args_json)
+    }
     /// Compatibility adapter. New integrations should use the named methods.
     pub fn invoke(&mut self, json: &str) -> String {
         self.engine.invoke(json)
@@ -153,4 +163,73 @@ fn json(value: impl serde::Serialize) -> std::result::Result<String, JsValue> {
 #[wasm_bindgen]
 pub fn tool_definitions() -> std::result::Result<String, JsValue> {
     json(crate::tool_definitions())
+}
+
+fn asset_wav(name: &str, args_json: &str) -> std::result::Result<Vec<u8>, JsValue> {
+    if args_json.len() > 1024 * 1024 {
+        return Err(JsValue::from_str("asset request exceeds 1 MiB"));
+    }
+    let args = serde_json::from_str(args_json).map_err(|e| js_error(e.into()))?;
+    crate::execute_asset_tool(name, args)
+        .map(|asset| asset.wav_bytes())
+        .map_err(js_error)
+}
+
+/// Stateless exact-length loop rendering, returning stereo interleaved PCM.
+#[wasm_bindgen]
+pub fn render_loop(
+    json: &str,
+    sample_rate: u32,
+    loop_s: f32,
+) -> std::result::Result<Vec<f32>, JsValue> {
+    Recipe::from_json(json)
+        .and_then(|r| crate::render_loop(&r, sample_rate, loop_s))
+        .map(|a| a.into_samples())
+        .map_err(js_error)
+}
+/// Additive dry-mid rendering. Existing render_recipe retains its behavior.
+#[wasm_bindgen]
+pub fn render_with_options(
+    json: &str,
+    sample_rate: u32,
+    options_json: &str,
+) -> std::result::Result<Vec<f32>, JsValue> {
+    let options = serde_json::from_str(options_json).map_err(|e| js_error(e.into()))?;
+    Recipe::from_json(json)
+        .and_then(|r| crate::render_with_options(&r, sample_rate, options))
+        .map(|a| a.into_samples())
+        .map_err(js_error)
+}
+#[wasm_bindgen]
+pub fn render_loop_with_options(
+    json: &str,
+    sample_rate: u32,
+    loop_s: f32,
+    options_json: &str,
+) -> std::result::Result<Vec<f32>, JsValue> {
+    let options = serde_json::from_str(options_json).map_err(|e| js_error(e.into()))?;
+    Recipe::from_json(json)
+        .and_then(|r| crate::render_loop_with_options(&r, sample_rate, loop_s, options))
+        .map(|a| a.into_samples())
+        .map_err(js_error)
+}
+#[wasm_bindgen]
+pub fn render_mix_layers(json: &str, sample_rate: u32) -> std::result::Result<Vec<f32>, JsValue> {
+    render_mix_layers_with_options(json, sample_rate, "{}")
+}
+#[wasm_bindgen]
+pub fn render_mix_layers_with_options(
+    json: &str,
+    sample_rate: u32,
+    options_json: &str,
+) -> std::result::Result<Vec<f32>, JsValue> {
+    if json.len() > 1024 * 1024 {
+        return Err(JsValue::from_str("layers exceed 1 MiB"));
+    }
+    let layers: Vec<crate::MixLayer> =
+        serde_json::from_str(json).map_err(|e| js_error(e.into()))?;
+    let options = serde_json::from_str(options_json).map_err(|e| js_error(e.into()))?;
+    crate::render_mix_layers_with_options(&layers, sample_rate, options)
+        .map(|a| a.into_samples())
+        .map_err(js_error)
 }

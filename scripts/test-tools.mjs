@@ -8,8 +8,8 @@ const engine = new Chirrp();
 // The new integration must never fall back to the legacy dispatcher.
 engine.invoke = () => { throw new Error('Legacy invoke used'); };
 const tools = createChirrpTools(engine);
-assert.equal(Object.keys(tools).length, 12);
-assert.equal(tools.list_sounds.execute().length, 39);
+assert.equal(Object.keys(tools).length, 15);
+assert.equal(tools.list_sounds.execute().length, 66);
 assert.throws(() => tools.list_candidates.execute());
 const summary = tools.create_sound.execute({ kind: 'laser' });
 assert.equal(summary.candidates.length, 6);
@@ -68,4 +68,29 @@ assert.equal(engine.snapshot(), randomState);
 assert.throws(() => tools.random_sound.execute({ population: 1 }));
 assert.equal(engine.snapshot(), randomState);
 engine.free();
-console.log('All 12 named tools passed against real WASM, including atomic errors, defaults, and artifact delivery.');
+console.log('All 15 named tools passed against real WASM, including atomic errors, defaults, and artifact delivery.');
+
+// Additive stateless exports share validation and keep the active session.
+const assetEngine = new Chirrp();
+const assets = createChirrpTools(assetEngine);
+assets.create_sound.execute({ kind: 'heavy_slug' });
+const assetBefore = assetEngine.snapshot();
+const slug = assets.get_recipe.execute({ index: 0 });
+const bed = assets.generate_loop.execute({ kind: 'hull_rumble', loop_s: 0.5, sample_rate: 24000, mono: true, dry_mid: true });
+assert.equal(bed.channels, 1);
+assert.equal(bed.data.length, 44 + 12000 * 2 + 68);
+assert.equal(new TextDecoder().decode(bed.data.slice(44 + 24000, 48 + 24000)), 'smpl');
+const layer = assets.mix_layers.execute({ layers: [{ recipe: slug, gain: 0.25, delay_s: 0.1 }], mono: true });
+assert.equal(layer.channels, 1);
+assert.ok(layer.data instanceof Uint8Array);
+assert.ok(assets.render_sound.execute({ recipe: slug, mono: true, dry_mid: true }).data instanceof Uint8Array);
+for (const [tool, args] of [
+  ['generate_loop', { kind: 'hull_rumble', loop_s: 0 }],
+  ['generate_loop', { kind: 'hull_rumble', loop_s: 1, mono: 'yes' }],
+  ['mix_layers', { layers: [{ recipe: slug, delay_s: -1 }] }],
+  ['mix_layers', { layers: [{ recipe: slug, gain: NaN }] }],
+  ['render_sound', { recipe: { ...slug, seed: -1 } }],
+]) assert.throws(() => assets[tool].execute(args));
+assert.equal(assetEngine.snapshot(), assetBefore);
+assetEngine.free();
+console.log('Loop, dry mono, and timed-layer exports passed against real WASM.');

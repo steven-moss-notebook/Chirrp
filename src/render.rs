@@ -1,7 +1,7 @@
 use crate::{Error, Recipe, Result, SoundKind};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::f32::consts::PI;
 use symbios_audio::{
     AdsrEnvelope, AntiAlias, AudioPatch, BakeContext, BiquadLowpass, Connection as C, Gain,
@@ -22,6 +22,7 @@ pub struct AudioMetrics {
 pub struct AudioBuffer {
     sample_rate: u32,
     samples: Vec<f32>,
+    looped: bool,
 }
 impl AudioBuffer {
     pub fn sample_rate(&self) -> u32 {
@@ -60,24 +61,86 @@ impl AudioBuffer {
             duration_seconds: self.frames() as f32 / self.sample_rate as f32,
         }
     }
+    /// Metrics of the mono WAV downmix, before PCM16 quantization.
+    pub fn mono_metrics(&self) -> AudioMetrics {
+        let mut peak = 0f32;
+        let mut energy = 0f64;
+        for frame in self.samples.chunks_exact(2) {
+            let mid = (frame[0] + frame[1]) * 0.5;
+            peak = peak.max(mid.abs());
+            energy += (mid as f64).powi(2);
+        }
+        AudioMetrics {
+            peak,
+            rms: (energy / self.frames() as f64).sqrt() as f32,
+            stereo_correlation: 1.,
+            duration_seconds: self.frames() as f32 / self.sample_rate as f32,
+        }
+    }
+    /// Whether the complete buffer is a baked forward loop.
+    pub fn is_loop(&self) -> bool {
+        self.looped
+    }
+
     /// Widely supported RIFF PCM16 stereo WAV, little endian.
     pub fn wav_bytes(&self) -> Vec<u8> {
-        let size = (self.samples.len() * 2) as u32;
-        let mut out = Vec::with_capacity(44 + size as usize);
+        self.encode_wav(false)
+    }
+    /// PCM16 mono WAV for game spatializers; loop metadata is retained.
+    pub fn wav_bytes_mono(&self) -> Vec<u8> {
+        self.encode_wav(true)
+    }
+    fn encode_wav(&self, mono: bool) -> Vec<u8> {
+        let channels = if mono { 1u16 } else { 2 };
+        let size = (self.frames() * channels as usize * 2) as u32;
+        let extra = if self.looped { 68 } else { 0 };
+        let mut out = Vec::with_capacity(44 + size as usize + extra);
         out.extend_from_slice(b"RIFF");
-        out.extend_from_slice(&(36 + size).to_le_bytes());
+        out.extend_from_slice(&(36 + size + extra as u32).to_le_bytes());
         out.extend_from_slice(b"WAVEfmt ");
         out.extend_from_slice(&16u32.to_le_bytes());
         out.extend_from_slice(&1u16.to_le_bytes());
-        out.extend_from_slice(&2u16.to_le_bytes());
+        out.extend_from_slice(&channels.to_le_bytes());
         out.extend_from_slice(&self.sample_rate.to_le_bytes());
-        out.extend_from_slice(&(self.sample_rate * 4).to_le_bytes());
-        out.extend_from_slice(&4u16.to_le_bytes());
+        out.extend_from_slice(&(self.sample_rate * channels as u32 * 2).to_le_bytes());
+        out.extend_from_slice(&(channels * 2).to_le_bytes());
         out.extend_from_slice(&16u16.to_le_bytes());
         out.extend_from_slice(b"data");
         out.extend_from_slice(&size.to_le_bytes());
-        for sample in &self.samples {
-            out.extend_from_slice(&((sample * 32767.).round() as i16).to_le_bytes());
+        for frame in self.samples.chunks_exact(2) {
+            if mono {
+                out.extend_from_slice(
+                    &(((frame[0] + frame[1]) * 0.5 * 32767.).round() as i16).to_le_bytes(),
+                );
+            } else {
+                for sample in frame {
+                    out.extend_from_slice(&((sample * 32767.).round() as i16).to_le_bytes());
+                }
+            }
+        }
+        if self.looped {
+            // RIFF smpl: one infinite forward loop, inclusive end frame.
+            out.extend_from_slice(b"smpl");
+            out.extend_from_slice(&60u32.to_le_bytes());
+            for value in [
+                0,
+                0,
+                (1_000_000_000. / self.sample_rate as f64).round() as u32,
+                60,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                self.frames() as u32 - 1,
+                0,
+                0,
+            ] {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
         }
         out
     }
@@ -142,6 +205,7 @@ pub fn mix(sounds: &[&AudioBuffer]) -> Result<AudioBuffer> {
     Ok(AudioBuffer {
         sample_rate,
         samples,
+        looped: false,
     })
 }
 
@@ -337,9 +401,24 @@ impl Highpass {
     }
 }
 
-/// Offline render at 22.05–96 kHz. Maximum recipe duration is bounded to under
-/// six seconds. No device, filesystem, clock, global RNG, or threads are used.
+/// Offline render at 22.05–96 kHz. Bed recipes support up to 16 seconds of decay. No device, filesystem, clock, global RNG, or threads are used.
 pub fn render(recipe: &Recipe, sample_rate: u32) -> Result<AudioBuffer> {
+    render_with_options(recipe, sample_rate, RenderOptions::default())
+}
+
+/// Additive export controls; default options preserve the original renderer.
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct RenderOptions {
+    /// Bypass room and all side detail, returning identical dry mid channels.
+    pub dry_mid: bool,
+}
+
+pub fn render_with_options(
+    recipe: &Recipe,
+    sample_rate: u32,
+    options: RenderOptions,
+) -> Result<AudioBuffer> {
     recipe.validate()?;
     if !(22_050..=96_000).contains(&sample_rate) {
         return Err(Error("sample_rate must be in [22050, 96000]".into()));
@@ -356,7 +435,26 @@ pub fn render(recipe: &Recipe, sample_rate: u32) -> Result<AudioBuffer> {
             Vec::new(),
         )
     };
-    let tail = if modern {
+    finish(recipe, sample_rate, &dry, &direct_side, false, options)
+}
+
+fn finish(
+    recipe: &Recipe,
+    sample_rate: u32,
+    dry: &[f32],
+    direct_side: &[f32],
+    continuous: bool,
+    options: RenderOptions,
+) -> Result<AudioBuffer> {
+    let g = &recipe.genome;
+    let modern = recipe.version >= 2;
+    let cinema = recipe.version >= 7 && recipe.kind.is_space();
+    let mut cinema_room = cinema.then(|| crate::cinematic::SpaceRoom::new(sample_rate, g.room));
+    let tail = if continuous || options.dry_mid {
+        0.
+    } else if cinema {
+        0.05 + g.room * 4.
+    } else if modern {
         0.035 + g.room * 1.6
     } else {
         0.12 + g.room * 2.4
@@ -393,6 +491,34 @@ pub fn render(recipe: &Recipe, sample_rate: u32) -> Result<AudioBuffer> {
         } else {
             saturated
         });
+        if options.dry_mid {
+            let fade = if continuous {
+                1.
+            } else {
+                ((frames - 1 - i) as f32 / fade_frames as f32).min(1.)
+                    * (i as f32 / (sample_rate as f32 * 0.0008)).min(1.)
+            };
+            samples.extend_from_slice(&[input * fade, input * fade]);
+            continue;
+        }
+        if let Some(room) = &mut cinema_room {
+            let (wet_mid, wet_side) = room.tick(input);
+            let mid = input + wet_mid * g.room * 0.9;
+            let direct = direct_side.get(i).copied().unwrap_or(0.);
+            let mut side = wet_side * g.room * 1.2 + (direct * g.drive).tanh() / g.drive;
+            for hp in &mut side_hp {
+                side = hp.tick(side);
+            }
+            side *= g.width;
+            let fade = if continuous {
+                1.
+            } else {
+                ((frames - 1 - i) as f32 / fade_frames as f32).min(1.)
+                    * (i as f32 / (sample_rate as f32 * 0.0008)).min(1.)
+            };
+            samples.extend_from_slice(&[(mid + side) * fade, (mid - side) * fade]);
+            continue;
+        }
         let mut room_input = input;
         if modern {
             for diffuser in &mut diffusion {
@@ -430,7 +556,7 @@ pub fn render(recipe: &Recipe, sample_rate: u32) -> Result<AudioBuffer> {
         side *= g.width;
         let fade_out = ((frames - 1 - i) as f32 / fade_frames as f32).min(1.);
         let fade_in = (i as f32 / (sample_rate as f32 * 0.0008)).min(1.);
-        let fade = fade_in * fade_out;
+        let fade = if continuous { 1. } else { fade_in * fade_out };
         samples.push((mid + side) * fade);
         samples.push((mid - side) * fade);
     }
@@ -458,5 +584,143 @@ pub fn render(recipe: &Recipe, sample_rate: u32) -> Result<AudioBuffer> {
     Ok(AudioBuffer {
         sample_rate,
         samples,
+        looped: false,
+    })
+}
+
+/// A timed recipe layer. Gain is linear; delay is measured from the mix start.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct MixLayer {
+    pub recipe: Recipe,
+    #[serde(default = "unity")]
+    pub gain: f32,
+    #[serde(default)]
+    pub delay_s: f32,
+}
+fn unity() -> f32 {
+    1.
+}
+impl MixLayer {
+    pub fn new(recipe: Recipe, gain: f32, delay_s: f32) -> Self {
+        Self {
+            recipe,
+            gain,
+            delay_s,
+        }
+    }
+}
+
+/// Render 1–32 layers, preserving delayed tails and protecting the sum at 0.89.
+/// Delay is rounded to the nearest frame. Gain is 0–8; delay is 0–16 seconds.
+pub fn render_mix_layers(layers: &[MixLayer], sample_rate: u32) -> Result<AudioBuffer> {
+    render_mix_layers_with_options(layers, sample_rate, RenderOptions::default())
+}
+
+pub fn render_mix_layers_with_options(
+    layers: &[MixLayer],
+    sample_rate: u32,
+    options: RenderOptions,
+) -> Result<AudioBuffer> {
+    if layers.is_empty() || layers.len() > 32 {
+        return Err(Error("mix requires 1–32 layers".into()));
+    }
+    validate_rate(sample_rate)?;
+    for layer in layers {
+        layer.recipe.validate()?;
+        crate::range("gain", layer.gain, 0., 8.)?;
+        crate::range("delay_s", layer.delay_s, 0., 16.)?;
+    }
+    // Render and accumulate sequentially to avoid holding 32 long bed buffers.
+    let mut samples = Vec::<f32>::new();
+    for layer in layers {
+        let audio = render_with_options(&layer.recipe, sample_rate, options)?;
+        let offset = (layer.delay_s * sample_rate as f32).round() as usize * 2;
+        samples.resize(samples.len().max(offset + audio.samples.len()), 0.);
+        for (out, input) in samples[offset..].iter_mut().zip(audio.samples) {
+            *out += input * layer.gain;
+        }
+    }
+    protect(&mut samples);
+    Ok(AudioBuffer {
+        sample_rate,
+        samples,
+        looped: false,
+    })
+}
+
+fn validate_rate(sample_rate: u32) -> Result<()> {
+    if !(22_050..=96_000).contains(&sample_rate) {
+        return Err(Error("sample_rate must be in [22050, 96000]".into()));
+    }
+    Ok(())
+}
+fn protect(samples: &mut [f32]) {
+    let peak = samples.iter().fold(0f32, |p, s| p.max(s.abs()));
+    if peak > 0.89 {
+        for s in samples {
+            *s *= 0.89 / peak;
+        }
+    }
+}
+
+/// Bake an exact-length 0.1–16 second loop, rounded to the nearest frame.
+/// Beds use continuous synthesis with a one-second filter/room preroll.
+/// Other kinds repeat their one-shot at its natural duration (e.g. UI alarms).
+/// A 50 ms (at most one quarter loop) complementary smooth crossfade replaces
+/// the end with preroll leading into the start. No boundary fade to silence is
+/// applied. WAV exports include a forward, infinite `smpl` loop over all frames.
+pub fn render_loop(recipe: &Recipe, sample_rate: u32, loop_s: f32) -> Result<AudioBuffer> {
+    render_loop_with_options(recipe, sample_rate, loop_s, RenderOptions::default())
+}
+
+pub fn render_loop_with_options(
+    recipe: &Recipe,
+    sample_rate: u32,
+    loop_s: f32,
+    options: RenderOptions,
+) -> Result<AudioBuffer> {
+    recipe.validate()?;
+    validate_rate(sample_rate)?;
+    crate::range("loop_s", loop_s, 0.1, 16.)?;
+    let frames = (loop_s * sample_rate as f32).round() as usize;
+    let cross = ((0.05 * sample_rate as f32).round() as usize).min(frames / 4);
+    let (source, start) = if recipe.kind.is_bed() {
+        let warm = sample_rate as usize;
+        let (dry, side) = if recipe.version >= 7 {
+            crate::cinematic::space_bed(recipe, sample_rate, warm + frames + cross)
+        } else {
+            (
+                crate::cinematic::bed(recipe, sample_rate, warm + frames + cross, true),
+                Vec::new(),
+            )
+        };
+        (
+            finish(recipe, sample_rate, &dry, &side, true, options)?.samples,
+            warm,
+        )
+    } else {
+        let shot = render_with_options(recipe, sample_rate, options)?;
+        let mut source = Vec::with_capacity((frames + cross) * 2);
+        for i in 0..frames + cross {
+            let at = (i % shot.frames()) * 2;
+            source.extend_from_slice(&shot.samples[at..at + 2]);
+        }
+        (source, 0)
+    };
+    let mut samples = source[(start + cross) * 2..(start + cross + frames) * 2].to_vec();
+    for i in 0..cross {
+        let u = i as f32 / (cross - 1) as f32;
+        let w = u * u * (3. - 2. * u);
+        for ch in 0..2 {
+            let end = (frames - cross + i) * 2 + ch;
+            samples[end] = samples[end] * (1. - w) + source[(start + i) * 2 + ch] * w;
+        }
+    }
+    protect(&mut samples);
+    Ok(AudioBuffer {
+        sample_rate,
+        samples,
+        looped: true,
     })
 }

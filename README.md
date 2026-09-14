@@ -2,7 +2,7 @@
 
 Deterministic procedural sound effects for Rust, with stereo PCM/WAV rendering, seeded variation, and optional Bevy integration. No audio files, soundfonts, window, GPU, server, or audio device are needed.
 
-Chirrp provides 39 synthesized presets: UI click, hover, confirm, error, footstep, explosion, laser, impact, pickup, jump, whoosh, power up, drop, tap, shake, wiggle, rattle, calculator, squish, squeeze, turn, tear, twist, tighten, poke, grab, ring, droplets, rain, wind, leaves, waves, rustling, thunder, dodge, slide, swing, stomp, and bird chirps. Use `catalog()` to discover their names and descriptions.
+Chirrp provides 66 synthesized presets. The original bank includes UI click, hover, confirm, error, footstep, explosion, laser, impact, pickup, jump, whoosh, power up, drop, tap, shake, wiggle, rattle, calculator, squish, squeeze, turn, tear, twist, tighten, poke, grab, ring, droplets, rain, wind, leaves, waves, rustling, thunder, car engine rumble, dodge, slide, swing, stomp, bird chirps, and seagull. The 25 space-bank additions cover energy weapons, ship machinery, ice, and five faction palettes. Use `catalog()` to discover their names and descriptions; `SoundKind::is_bed()` identifies continuous sources.
 
 An optional `chirrp-mcp` executable lets local agents generate and export game sounds through MCP. It is enabled by the `mcp` feature and is **not required to use the Rust library or WASM bindings**. See [local agent setup](#optional-mcp-server-for-local-agents).
 
@@ -36,7 +36,7 @@ std::fs::write("explosion.wav", audio.wav_bytes())?;
 
 Rendering is synchronous and offline. Bake sounds before playback or schedule rendering on your application's job system; it allocates and should not run in a real-time audio callback. The crate returns audio data; your application handles playback and storage.
 
-Sample rates from 22,050 through 96,000 Hz are supported. Identical recipes and rates reproduce identical PCM on the same target; floating-point differences may occur between architectures and WASM. These are bounded one-shot sounds, not seamless ambience loops.
+Sample rates from 22,050 through 96,000 Hz are supported. Identical recipes and rates reproduce identical PCM on the same target; floating-point differences may occur between architectures and WASM. Existing one-shot rendering remains available. The additive loop API bakes seamless clips up to 16 seconds.
 
 ## Mix sounds
 
@@ -58,6 +58,39 @@ let wav = audio.wav_bytes();
 For already rendered sounds, use `chirrp::mix(&[&first, &second, &third])` to avoid rendering again. Inputs must have the same sample rate; an empty list or mismatched rates returns an error. There is no fixed limit on the number of sounds beyond available memory.
 
 Mixing uses the `symbios_audio::Mix` node. Sounds start together at frame zero, retain independent left/right channels, and last as long as the longest input, including room tails. Samples are summed at unity gain; if the result exceeds the 0.89 peak ceiling, the entire mix is attenuated equally in both channels. Quiet mixes are not amplified, and mixing one sound returns identical PCM.
+
+## Loops, dry mono exports, and timed layers
+
+Existing `render`, `mix`, `render_mix`, session methods, recipe fields, and their default stereo WAV format retain their contracts. New functions provide the additional export behavior:
+
+```rust
+use chirrp::{Recipe, SoundKind, RenderOptions, MixLayer,
+    render_loop_with_options, render_mix_layers_with_options};
+
+let world = RenderOptions { dry_mid: true };
+let bed = Recipe::new(SoundKind::HullRumble, 42);
+let audio = render_loop_with_options(&bed, 48_000, 8.0, world)?;
+assert_eq!(audio.frames(), 384_000);
+std::fs::write("hull.wav", audio.wav_bytes_mono())?;
+
+let layers = [
+    MixLayer::new(Recipe::new(SoundKind::BeamIgnite, 42), 0.65, 0.0),
+    MixLayer::new(Recipe::new(SoundKind::HeavySlug, 7), 0.4, 0.18),
+];
+let hazard = render_mix_layers_with_options(&layers, 48_000, world)?;
+std::fs::write("hazard.wav", hazard.wav_bytes_mono())?;
+# Ok::<(), Box<dyn std::error::Error>>(())
+```
+
+`render_loop(recipe, sr, loop_s)` and `render_mix_layers(layers, sr)` use the normal stereo room. Their `*_with_options` variants, plus `render_with_options`, accept `RenderOptions`. `dry_mid` bypasses baked room and direct side detail. Internal PCM stays interleaved stereo; `wav_bytes_mono()` writes a true one-channel WAV for Bevy spatial emitters. Width zero alone still includes mid-channel room.
+
+Loops last 0.1–16 seconds, rounded to the nearest frame, and use a smooth 50 ms end/start crossfade (at most a quarter of the clip). Bed kinds synthesize continuously after a one-second filter/room preroll. Other kinds repeat their natural one-shot duration, useful for alarms. WAVs include an infinite forward `smpl` loop with an inclusive end frame. Configure runtime looping explicitly when the game decoder does not honor `smpl`; in Bevy use looping playback settings and the game's spatial scale, such as 0.12.
+
+The eight continuous kinds are `BeamLoop`, `GravityDrone`, `HullRumble`, `VacuumLoop`, `MagnetPulse`, `FurnaceBed`, `NaniteHiss`, and `ChoirInterval`. Each bed has its own source engine rather than a shared noise swell. They accept `genome.envelope.decay_s` up to 16 and `sustain_level` from 0 to 1. One-shot bed rendering includes attack, decay, release, and room tail; loop duration is set independently by `loop_s`. Other kinds keep their original envelope bounds. New space recipes use version 7, with layered pressure, material resonances, continuous formants, and a dedicated diffuse room. Saved versions 1–6 keep their original designs; the original 41 presets are unchanged.
+
+Timed mixes accept 1–32 `MixLayer { recipe, gain, delay_s }` values. Gains are linear 0–8; delays are 0–16 seconds, rounded to the nearest frame. The mix retains every delayed tail and applies shared attenuation only above a 0.89 sample peak.
+
+For portable exports, `render_sound_asset`, `generate_loop_asset`, and `render_mix_asset` accept typed requests and return `RenderedAsset` with WAV encoding and a reproducible sidecar. Rust, WASM, and MCP use this shared stateless asset layer. The existing session API stays separate. See [the space bank](docs/space-bank.md) for all new kinds, cue recipes, and agent examples.
 
 ## Edit and evolve sounds
 
