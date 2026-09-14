@@ -424,7 +424,7 @@ pub fn render_with_options(
         return Err(Error("sample_rate must be in [22050, 96000]".into()));
     }
     let g = &recipe.genome;
-    let modern = recipe.version >= 2;
+    let modern = recipe.kind.is_space() || recipe.version >= 2;
     let (dry, direct_side) = if modern {
         crate::design::dry(recipe, sample_rate)?
     } else {
@@ -447,13 +447,14 @@ fn finish(
     options: RenderOptions,
 ) -> Result<AudioBuffer> {
     let g = &recipe.genome;
-    let modern = recipe.version >= 2;
-    let cinema = recipe.version >= 7 && recipe.kind.is_space();
-    let mut cinema_room = cinema.then(|| crate::cinematic::SpaceRoom::new(sample_rate, g.room));
+    let modern = recipe.kind.is_space() || recipe.version >= 2;
+    let theater = recipe.kind.is_space();
+    let mut theater_room =
+        (theater && !options.dry_mid).then(|| crate::spatial::Theater::new(sample_rate, g.room));
     let tail = if continuous || options.dry_mid {
         0.
-    } else if cinema {
-        0.05 + g.room * 4.
+    } else if theater {
+        crate::spatial::Theater::tail(g.room)
     } else if modern {
         0.035 + g.room * 1.6
     } else {
@@ -501,11 +502,11 @@ fn finish(
             samples.extend_from_slice(&[input * fade, input * fade]);
             continue;
         }
-        if let Some(room) = &mut cinema_room {
+        if let Some(room) = &mut theater_room {
             let (wet_mid, wet_side) = room.tick(input);
-            let mid = input + wet_mid * g.room * 0.9;
+            let mid = input + wet_mid;
             let direct = direct_side.get(i).copied().unwrap_or(0.);
-            let mut side = wet_side * g.room * 1.2 + (direct * g.drive).tanh() / g.drive;
+            let mut side = wet_side + (direct * g.drive).tanh() / g.drive;
             for hp in &mut side_hp {
                 side = hp.tick(side);
             }
@@ -687,14 +688,8 @@ pub fn render_loop_with_options(
     let cross = ((0.05 * sample_rate as f32).round() as usize).min(frames / 4);
     let (source, start) = if recipe.kind.is_bed() {
         let warm = sample_rate as usize;
-        let (dry, side) = if recipe.version >= 7 {
-            crate::cinematic::space_bed(recipe, sample_rate, warm + frames + cross)
-        } else {
-            (
-                crate::cinematic::bed(recipe, sample_rate, warm + frames + cross, true),
-                Vec::new(),
-            )
-        };
+        let (dry, side) =
+            crate::cinematic::space_bed(recipe, sample_rate, warm + frames + cross);
         (
             finish(recipe, sample_rate, &dry, &side, true, options)?.samples,
             warm,

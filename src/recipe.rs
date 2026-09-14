@@ -69,13 +69,15 @@ pub enum SoundKind {
     IceShatter,
     FurnaceBed,
     AnvilPulse,
-    TissueWet,
     ScrapCreature,
     VoidHowl,
     NaniteHiss,
     SirenLock,
     ChoirInterval,
 }
+
+// Serialization marker for the sole supported space renderer.
+const SPACE_RECIPE_VERSION: u32 = 8;
 
 impl SoundKind {
     /// Continuous space-bank sources with extended decay and sustain controls.
@@ -93,7 +95,8 @@ impl SoundKind {
         )
     }
 
-    pub(crate) fn is_space(self) -> bool {
+    /// Whether this kind belongs to the 25-preset space bank.
+    pub fn is_space(self) -> bool {
         matches!(
             self,
             Self::PlasmaPulse
@@ -116,7 +119,6 @@ impl SoundKind {
                 | Self::IceShatter
                 | Self::FurnaceBed
                 | Self::AnvilPulse
-                | Self::TissueWet
                 | Self::ScrapCreature
                 | Self::VoidHowl
                 | Self::NaniteHiss
@@ -605,17 +607,60 @@ impl Genotype for Genome {
     }
 }
 
-/// Versioned, portable recipe. Same recipe and rate reproduce a render on a
+/// Portable recipe. Version is a serialization detail; space kinds always use
+/// their current design. Same recipe and rate reproduce a render on a
 /// given target; floating-point DSP may differ slightly across architectures.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Recipe {
     pub version: u32,
     pub kind: SoundKind,
     pub seed: u32,
     pub genome: Genome,
 }
+impl Serialize for Recipe {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        use serde::ser::SerializeStruct;
+        let mut fields = serializer.serialize_struct("Recipe", 4)?;
+        fields.serialize_field("version", &self.serialization_version())?;
+        fields.serialize_field("kind", &self.kind)?;
+        fields.serialize_field("seed", &self.seed)?;
+        fields.serialize_field("genome", &self.genome)?;
+        fields.end()
+    }
+}
+// Normalize at the serde boundary so sessions, asset requests, MCP, and WASM
+// all load the same current space recipe without a separate migration API.
+impl<'de> Deserialize<'de> for Recipe {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Fields {
+            version: u32,
+            kind: SoundKind,
+            seed: u32,
+            genome: Genome,
+        }
+        let fields = Fields::deserialize(deserializer)?;
+        let mut recipe = Self {
+            version: fields.version,
+            kind: fields.kind,
+            seed: fields.seed,
+            genome: fields.genome,
+        };
+        recipe.version = recipe.serialization_version();
+        Ok(recipe)
+    }
+}
+
 impl Recipe {
+    fn serialization_version(&self) -> u32 {
+        if self.kind.is_space() && (1..=SPACE_RECIPE_VERSION).contains(&self.version) {
+            SPACE_RECIPE_VERSION
+        } else {
+            self.version
+        }
+    }
+
     pub fn new(kind: SoundKind, seed: u32) -> Self {
         use SoundKind::*;
         // pitch, attack, decay, noise, body, sweep, texture, room, cutoff
@@ -690,7 +735,6 @@ impl Recipe {
             IceShatter => (140.0, 0.002, 1.25, 0.95, 0.9, 0.0, 0.55, 0.4, 9000.0),
             FurnaceBed => (46.0, 0.4, 6.0, 1.35, 0.75, 0.0, 0.8, 0.32, 5200.0),
             AnvilPulse => (85.0, 0.002, 1.6, 1.1, 1.2, 0.0, 0.65, 0.46, 10000.0),
-            TissueWet => (100.0, 0.015, 1.0, 1.1, 0.95, 0.0, 0.6, 0.24, 6500.0),
             ScrapCreature => (62.0, 0.05, 1.75, 1.05, 1.15, 0.0, 0.72, 0.42, 8000.0),
             VoidHowl => (55.0, 0.25, 1.9, 1.1, 1.1, 0.0, 0.6, 0.55, 6500.0),
             NaniteHiss => (780.0, 0.15, 4.0, 1.25, 0.18, 0.0, 0.9, 0.28, 9000.0),
@@ -700,7 +744,7 @@ impl Recipe {
         };
         Self {
             version: match kind {
-                k if k.is_space() => 7,
+                k if k.is_space() => SPACE_RECIPE_VERSION,
                 Explosion => 1,
                 Footstep | Laser => 3,
                 Rattle | Calculator | Wind | Leaves | Rustling | Seagull | CarEngineRumble => 5,
@@ -738,11 +782,11 @@ impl Recipe {
                 sweep,
                 texture,
                 width: if matches!(kind, Ricochet | RocketLaunch) {
-                    1.42
+                    1.5
                 } else if matches!(kind, IceShatter | WeakPoint | PlasmaPulse) {
-                    1.28
+                    1.43
                 } else if kind.is_space() {
-                    1.0
+                    1.25
                 } else if kind == CarEngineRumble {
                     0.28
                 } else if kind == Seagull {
@@ -756,7 +800,11 @@ impl Recipe {
                 } else {
                     0.8
                 },
-                room,
+                room: if kind.is_space() {
+                    0.25 + room * 0.8
+                } else {
+                    room
+                },
                 drive: if kind.is_space() {
                     1.12
                 } else if matches!(kind, Wind | Leaves | Rustling | Calculator) {
@@ -778,10 +826,10 @@ impl Recipe {
         }
     }
     pub fn validate(&self) -> Result<()> {
-        if !matches!(self.version, 1..=7) {
+        if !matches!(self.version, 1..=8) {
             return Err(Error("unsupported recipe version".into()));
         }
-        if self.kind.is_cinematic() && self.version < 4 {
+        if !self.kind.is_space() && self.kind.is_cinematic() && self.version < 4 {
             return Err(Error(
                 "cinematic categories require recipe version 4 or later".into(),
             ));
@@ -789,11 +837,6 @@ impl Recipe {
         if self.kind == SoundKind::Calculator && self.version < 5 {
             return Err(Error(
                 "calculator requires recipe version 5 or later".into(),
-            ));
-        }
-        if self.kind.is_space() && self.version < 6 {
-            return Err(Error(
-                "space categories require recipe version 6 or later".into(),
             ));
         }
         if !self.kind.is_bed() {

@@ -1,0 +1,135 @@
+[
+  {
+    "kind": "plasma_pulse",
+    "wet": "55dc435769d799c4b54f611b153fe812de4d14da33834f73434462ce65a94bd9",
+    "dry": "31349b55d2bb79425e4eaa1936232a4375af3947942e7d9d4bfd0a69df755b1b"
+  },
+  {
+    "kind": "heavy_slug",
+    "wet": "6a27a91664b18844278fc53d7016927908665bb27cc530a2f35c8e89b5fb0570",
+    "dry": "0938d9676dc62c65ad872887d39063072ccbb08baf19ab08298795fed7f96fc3"
+  },
+  {
+    "kind": "beam_ignite",
+    "wet": "53145f36b19fb1b734b38ef5011013fe46ff739cc602aa32644b6b552e7eee91",
+    "dry": "e512f6d7b618bf6ec3acda5b0d05da37e854d89f3f9c8f66c5b9308684735701"
+  },
+  {
+    "kind": "beam_loop",
+    "wet": "ae7256311656295fa822b44eb6dd5e09e5446c7a4414cea516de818ef9cdbfcd",
+    "dry": "b313b8c6617dfe7b4d302f7f4e2efa580bce8fa759245b79abf1b4a9820fd9c4",
+    "loop": "6b021392af8fff57f614aba3f2f8b353a27912af591105ff043287988a066131"
+  },
+  {
+    "kind": "arc_zap",
+    "wet": "7854e510e02f6b47d898363ac16c2d982de84f44fb2bde217fde59b2614a3fb6",
+    "dry": "f48c1d08aa76396af8bb4647a0cea39131b83a563e70e0c96005269a725b6c7e"
+  },
+  {
+    "kind": "rocket_launch",
+    "wet": "210c772e68f09e46d444851bfcf5ba535f49a941159d1088f57de299467a724a",
+    "dry": "8290ec926117a666c2bdddd87d879149c5634e06bd53b5c04867917b32c27596"
+  },
+  {
+    "kind": "energy_shield",
+    "wet": "831fe84a97a0d9269dceb447d5224069d0559ae3e7b9dbb9286cc27ec57d4bfb",
+    "dry": "52a8e3756f03ada9b304ec9d333b796d3742a17dc201c15ccf690e9e8a4bfa75"
+  },
+  {
+    "kind": "ricochet",
+    "wet": "2526d57e92c6e8bd4eddcc603066722e500aac2a72308e86a684fbd2623a0f6a",
+    "dry": "754258a7e631110c25444dc7e664d49956b546687c2e2cff8949e3be2dcb58aa"
+  },
+  {
+    "kind": "weak_point",
+    "wet": "9f8e212deb274e0071c61ceafff2f573fae4e4e9f1abb4b33995a0116e05f71f",
+    "dry": "38d67e430fca64497a3248409065b2bad93fb0ba68901bd6cfad1565d45d0d72"
+  },
+  {
+    "kind": "expanding_ring",
+    "wet": "ff06e72dcee9e8219512aaa0c3bcd82b0a40a3dc17d659acd2ac4982cc2587a3",
+    "dry": "72606068f748f0001bba47f25cfad91764979c696798cec9933b1bfb8e82ee65"
+  },
+  {
+    "kind": "gravity_drone",
+    "wet": "0f369db4d28acb4eb3ad8e17083b4f0c07b1136776f3c147efb8cc324cb9e657",
+    "dry": "7c322ef641d621d93bd9405d989ffa8c1dc4343fb3b3af5871162def9f43d861",
+    "loop": "b31d4658d9a495e5cbfffcd7c82153d055e04f529d5056de9174d16cc88fee2a"
+  },
+  {
+    "kind": "hull_rumble",
+    "wet": "c2bb88806cb8ae6a1ba922db90de5dc0bf6ce066535f229c46d39b6b7c2e4e85",
+    "dry": "bf660f779a2f81f39ffc2bd2471073740c776557e377a24a474ec3d4abeb2310",
+    "loop": "56466f8365f6f1f46de713c94b841287e19ff4e82c109a6bf59c0c6ccedd00ad"
+  },
+  {
+    "kind": "thruster",
+    "wet": "f429ee9a8769ad5362e731a1f8af943c8aed2f2c790f35f569412e0c7808af97",
+    "dry": "d47e18aed4ee24666cfec86c223c52f38426804f86d7b95e85a42048f1c56fed"
+  },
+  {
+    "kind": "vacuum_loop",
+    "wet": "aea0afdfe07286f3953385970e49cbbbc137fc7c42304d0a4532521b539e0e1a",
+    "dry": "23d9e9375ae70c1c0ce88e47f7fe6a2f616d1f5780993c6fd5a0c614797cfb4b",
+    "loop": "35cfc263ce37b2415630948d027922f2edeeb1460833bf72aafc776162b247ae"
+  },
+  {
+    "kind": "debris_clatter",
+    "wet": "15e28373d5f134b4f500b5b362c9a050981082b103e9bdcfb7145e00c2cda761",
+    "dry": "3da7226006a9a859f86954d2bb19f6e84a23d7075d0baecf21cc769007ef5131"
+  },
+  {
+    "kind": "magnet_pulse",
+    "wet": "47ead70bab9840c7a6ce1ccf7f6e697b0d660da1fcb35b4d5b16dd717be511fb",
+    "dry": "a2d6d4a1175ca4976a80eb3488e9e022ca6ae7bfc800a091a22b4325afca3bf1",
+    "loop": "f29f3b18aa604747d1285f3addc56e3dac58c0cbfd3f3f02eaef1afd959e2813"
+  },
+  {
+    "kind": "freeze_cone",
+    "wet": "2dbaf72191dbef5021d8b8141855c2b02fc7688949f9eaa8009b8581c754e7a5",
+    "dry": "671e0736e771436adc8fec37bec88c2e81afd7b70363c07b5fcfd2cb31262fc7"
+  },
+  {
+    "kind": "ice_shatter",
+    "wet": "c467f698026fcf79b6c14eb3be3fa5f8c6d5317c73693058f45b915f650d5e4f",
+    "dry": "7a95935c780f906583e61e11015b33db4eb854c27a3b501478b74dd0b6fa8b72"
+  },
+  {
+    "kind": "furnace_bed",
+    "wet": "20d133a6f1f1ce16eee73d1eea4df50af2e39d63ff9ac0e17704dc512b36b8d8",
+    "dry": "516801c5cae11db1c684238d68ab6c0d22008796b75ac17b73408e844c034be9",
+    "loop": "855e96a3309b36379b4b711d44e62f6a37822b40e0916d4809e807d1b56b9f28"
+  },
+  {
+    "kind": "anvil_pulse",
+    "wet": "05a24c1150e65fee2448407d395f190861f7712fca2f48936581bf78a78d573b",
+    "dry": "c14d9b404213689d125e3e95b799aa5e3d1d0a516a322297a028ddbd9f110112"
+  },
+  {
+    "kind": "scrap_creature",
+    "wet": "2cf19e882e2c8f783be300d1a5dc1edb0ba8ccb71347e9f52470fffdf94791aa",
+    "dry": "f225a4b7fcd407c9c43d635ad3b4c75126d7065ed0d960e32c15046360d3424d"
+  },
+  {
+    "kind": "void_howl",
+    "wet": "ac71345da260fa5e81b28990e30cfd46f3f47c23002baee2493f0a858d09317d",
+    "dry": "9522fdb643e0249387adaa4488d61f616eca8ac0f5a243c1a11440dc9ceccd42"
+  },
+  {
+    "kind": "nanite_hiss",
+    "wet": "b4ea2d6ed0a181389ecc2b5858bc7b96e6a8400fe4a4a22895c427219fab531c",
+    "dry": "482fd9f0f433c7d5e0d48dbe84eebb8afe8d9c115e2a844d553659c262180c6a",
+    "loop": "ad0fece1cb672f9462aa91488569d6230506788ee4f5e8f36af173c80bcc7adc"
+  },
+  {
+    "kind": "siren_lock",
+    "wet": "ced7506cb90b69be1558d48e9b71b4d67df8cf77dd52832f5cbcfaccccdea4ed",
+    "dry": "88fcc1cc32085cb7386c86d95284a450af56494bbfb8c4c260e2368966917371"
+  },
+  {
+    "kind": "choir_interval",
+    "wet": "85db53ad984f2c56db7eeab0e952b01b779748ba868c873dd462b5f7547a623e",
+    "dry": "29e17870bfc5108488f63f6d301b9e6d86dd237e651a72f5e1d487660640f6cd",
+    "loop": "417dc8a8a6623cd950092ce80e5da63dd62f4698afd90351d53f269b8c90b398"
+  }
+]

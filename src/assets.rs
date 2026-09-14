@@ -146,7 +146,7 @@ pub fn execute_asset_tool(name: &str, args: Value) -> Result<RenderedAsset> {
 pub fn asset_tool_definitions() -> Vec<ToolDefinition> {
     let rate = json!({"type":"integer","minimum":22050,"maximum":96000,"default":48000});
     let boolean = json!({"type":"boolean","default":false});
-    let recipe = json!({"type":"object","description":"Complete Recipe from get_recipe. Bed kinds accept decay_s up to 16 and sustain_level 0–1; other kinds retain their bounds. Validated by the library."});
+    let recipe = json!({"type":"object","description":"Complete Recipe from get_recipe. Space kinds always use their current design; no version selection is needed. Bed kinds accept decay_s up to 16 and sustain_level 0–1; other kinds retain their bounds. Validated by the library."});
     let seconds = json!({"type":"number","minimum":0.1,"maximum":16});
     let schema = |properties: Value, required: &[&str]| json!({"type":"object","additionalProperties":false,"properties":properties,"required":required});
     vec![

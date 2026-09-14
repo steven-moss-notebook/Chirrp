@@ -8,7 +8,7 @@ use serde_json::json;
 fn additive_defaults_preserve_existing_render_and_mix_contracts() {
     for entry in catalog()
         .into_iter()
-        .filter(|e| Recipe::new(e.kind, 42).version < 6)
+        .filter(|e| !e.kind.is_space())
     {
         let recipe = Recipe::new(entry.kind, 42);
         assert_eq!(
@@ -160,7 +160,7 @@ fn long_beds_preserve_sustain_through_evolution_and_respect_validation() {
         assert!(candidate.genome.envelope.decay_s > 2.);
         assert!(candidate.genome.envelope.sustain_level > 0.);
     }
-    recipe.version = 5;
+    recipe.version = 0;
     assert!(recipe.validate().is_err());
     let mut old = Recipe::new(SoundKind::Laser, 42);
     old.genome.envelope.sustain_level = 0.1;

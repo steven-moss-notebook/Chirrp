@@ -4,34 +4,21 @@ use chirrp::{
 };
 
 fn previous() -> Vec<Recipe> {
-    serde_json::from_str(include_str!("fixtures/pre-cinema-bank.json")).unwrap()
+    serde_json::from_str(include_str!("fixtures/original-bank.json")).unwrap()
 }
 
 #[test]
-fn original_41_presets_are_unchanged_and_saved_space_recipes_keep_v6() {
-    let mut originals = 0;
-    let mut space = 0;
-    for recipe in previous() {
+fn original_41_presets_are_unchanged() {
+    let originals = previous();
+    assert_eq!(originals.len(), 41);
+    for recipe in originals {
         let current = Recipe::new(recipe.kind, recipe.seed);
-        if recipe.version < 6 {
-            originals += 1;
-            assert_eq!(current, recipe);
-            assert_eq!(
-                render(&recipe, 24_000).unwrap().samples(),
-                render(&current, 24_000).unwrap().samples()
-            );
-        } else {
-            space += 1;
-            assert_eq!(current.version, 7);
-            let saved = Recipe::from_json(&recipe.to_json().unwrap()).unwrap();
-            assert_eq!(saved.version, 6);
-            assert_ne!(
-                render(&saved, 24_000).unwrap().samples(),
-                render(&current, 24_000).unwrap().samples()
-            );
-        }
+        assert_eq!(current, recipe);
+        assert_eq!(
+            render(&recipe, 24_000).unwrap().samples(),
+            render(&current, 24_000).unwrap().samples()
+        );
     }
-    assert_eq!((originals, space), (41, 26));
 }
 
 #[test]

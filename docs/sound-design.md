@@ -6,7 +6,7 @@ The serial interactive evolutionary loop lives in Chirrp: Randomize implements *
 
 Strength is a per-field mutation probability, not a promise of improvement. A zero-strength Randomize produces exact copies. Higher ratings in `[0,1]` steer `evolve`; provide one rating per candidate. User choices or an agent's evaluator define “better.” Unrated randomization does not learn taste or automatically assess cinematic quality. An agent can audition renders, use `analyze` as signal diagnostics, and supply its own ratings. The chosen favorite / highest-rated elite is preserved exactly, including its noise seed. Save snapshots and explicit future seeds to replay an evolutionary sequence.
 
-The 25 catalogued space-bank arrangements now use version 7; eight have continuous bed synthesis. See [space-bank.md](space-bank.md). Fresh footstep and laser recipes use sound design version 3. The explosion default restores the original version-1 sound; the other original categories keep their version-2 designs. The additional scenes use version 4, except fresh rattle, calculator, wind, leaves, rustling, seagull, and car engine rumble recipes, which use version 5. Saved recipes keep the renderer specified by their version. Each category has a dedicated voice arrangement rather than the original shared oscillator/noise stack:
+The space bank contains 25 arrangements, each with one current design; eight have continuous bed synthesis. See [the theater field](#space-theater-field). Fresh footstep and laser recipes use sound design version 3. The explosion default restores the original version-1 sound; the other original categories keep their version-2 designs. The additional scenes use version 4, except fresh rattle, calculator, wind, leaves, rustling, seagull, and car engine rumble recipes, which use version 5. Saved recipes for the original 41 kinds keep their original processing. Each category has a dedicated voice arrangement rather than the original shared oscillator/noise stack:
 
 - **Hover:** an 86 ms soft touch cue, nearly dry, with a 0.045 maximum sample peak (about −27 dBFS); repeated cues stay quiet.
 - **Confirm / error:** a warm ascending major resolution / a subdued descending minor-third phrase.
@@ -33,7 +33,7 @@ Each new scene uses independently seeded excitation and stereo trajectories. The
 
 Short-envelope mutations are constrained proportionally around the parent, with extra duration/pitch/room bounds for hover offspring. The unchanged favorite remains available in slot 0. Direct edits are still validated against the public control bounds; some material-specific controls are intentionally limited inside the voice arrangement (for example, the laser's pitch bend).
 
-Version-2/3/4/5/6/7 mastering uses role-specific fixed gain with **attenuation-only peak protection**. The restored version-1 explosion retains its original mastering. It never boosts a quiet hover up to the level of a game impact. Category ceilings range from 0.045 for hover to **0.89 (~−1 dBFS)** for explosion. Saturation is gain-compensated. Stereo reflections feed a damped four-delay room with two all-pass diffusers, and tails are shorter. A two-pole 250 Hz high-pass keeps the side signal out of the deep bass. Width zero gives identical channels; mono downmix preserves the mid signal up to linked mastering gain. Start/end fades suppress boundary clicks. These are sample-peak ceilings, not true-peak or loudness normalization.
+Modern mastering uses role-specific fixed gain with **attenuation-only peak protection**. The restored version-1 explosion retains its original mastering. It never boosts a quiet hover up to the level of a game impact. Category ceilings range from 0.045 for hover to **0.89 (~−1 dBFS)** for explosion. Saturation is gain-compensated. Stereo reflections feed a damped four-delay room with two all-pass diffusers, and tails are shorter. A two-pole 250 Hz high-pass keeps the side signal out of the deep bass. Width zero gives identical channels; mono downmix preserves the mid signal up to linked mastering gain. Start/end fades suppress boundary clicks. These are sample-peak ceilings, not true-peak or loudness normalization.
 
 Existing version-1 recipes retain their original renderer and mastering. Use `Recipe::new` for the current preset design, or deserialize an existing recipe to preserve its version.
 
@@ -81,26 +81,51 @@ channels once before PCM16 quantization. Timed layers preserve linear gain and
 delay before a shared 0.89 peak-protection pass.
 
 
-The cinema revision applies only to fresh space recipes (version 7). Its source
-arrangements live in `src/cinematic/space.rs`: two-times sampling, four-pole
-output filtering, pressure noise plus restrained sub fundamentals, 22 damped
-inharmonic modes for material contacts, and voiced harmonic excitation through
-formant filters for throat/choir sounds. These replace the exposed sine bends
-and simple dyads of version 6. Source gain stays controlled before the existing
-linked peak protection. Space one-shots can run up to nine seconds at extreme
-edits, including the room tail; original one-shot bounds remain unchanged.
+## Space theater field
 
-Version 7 has a dedicated room: 21 ms predelay, four all-pass input diffusers,
-and an eight-line Householder feedback network with damping. Its RT60 control
-is approximately 0.45 + 3.2 × room seconds; the allocated tail is 0.05 + 4 × room
-seconds. The wet input rejects low bass. This room is bypassed by `dry_mid` and
-is not applied to any original or version-six recipe. The previous room and
-source code remain available for saved recipes.
+The space bank has one current source design and theater processor per kind.
+The voice arrangements in `src/cinematic/space.rs` retain their pitch, timing,
+envelopes, material resonances, and direct stereo detail. The original 41 kinds
+retain their presets, renders, and saved-recipe support.
 
-The bank exporter now provides dry mono assets at `audition/space/`, stereo
-cinematic auditions under `audition/space/cinematic/`, and a composed
-`space_battle_showcase.wav` with an exact mix sidecar. Audio checks measure
-transient contrast over fixed windows, low-band stereo balance, tail activity,
-loop seams and rate limits. The redesign was signal-checked; the generated
-previews are supplied for listening review rather than certified as perceptually
-finished by automated tests.
+The separate theater processor in `src/spatial.rs` uses five reflection paths
+per channel, a 27 ms late-field predelay, four all-pass diffusers, and a damped
+12-line feedback network. Distinct left/right reflection paths provide space
+around the centered onset. Gentle envelope following reduces reflections during
+strong attacks. The wet input rejects bass below approximately 180 Hz, and the
+existing two 250 Hz side high-passes keep the low body centered. This is a baked
+stereo field, not a multichannel theater format.
+
+`room` controls reflection level and decay: nominal RT60 is `0.65 + 3.6 * room`
+seconds, with frequency-dependent damping. One-shots allocate `0.1 + 5 * room`
+seconds of tail (35 ms at room zero). `width = 0` gives identical channels while
+retaining mid-channel room. For space sounds, `room = 0` removes the room reflections
+but preserves any direct stereo detail; `dry_mid` bypasses both. Continuous beds
+use the same field before the existing loop crossfade and WAV loop metadata.
+Linked peak protection remains capped at 0.89.
+
+Rust, WASM, and MCP use this processing through their existing render and asset
+functions; their signatures and request fields are unchanged. Use `Recipe::new`
+or `create_sound` to obtain the current recipe. `SoundKind::is_space()` identifies
+space kinds without inspecting recipe numbers. The serialized `version` field
+remains for API compatibility, but it is not a choice between space designs.
+Space recipes load automatically into the current design while retaining seed
+and genome settings. This applies equally to saved sessions and asset requests;
+there is no migration step or older space renderer to select.
+
+Export all 25 space kinds at 48 kHz, seed 42:
+
+```sh
+cargo run --release --example spatial_audition -- audition/spatial
+```
+
+The root directory contains stereo WAVs (eight-second loops for beds) and JSON
+sidecars; each sidecar's `render_sound` object can be passed directly to the MCP
+`render_sound` tool or the typed library request. `dry/` contains mono one-shot
+source references, and `bank.json` records recipes, PCM hashes, and signal metrics.
+
+Regression checks preserve exact PCM hashes for the current 25 space voices
+and eight loops, plus the original 41 presets. Signal checks cover reflected-tail
+energy, upper-band stereo spread, mono compatibility, loop seams, sample rates,
+and peak protection. These
+are signal checks; the WAVs are provided for listening review.

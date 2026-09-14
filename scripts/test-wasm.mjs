@@ -114,15 +114,31 @@ assert.deepEqual(render_mix_layers(layersJson, 24000), render_mix_layers_with_op
 const dryShot = render_with_options(shotJson, 24000, '{"dry_mid":true}');
 const dryMix = render_mix_layers_with_options(layersJson, 24000, '{"dry_mid":true}');
 assert.equal(dryMix.length, dryShot.length + 6000);
-for (let i = 0; i < dryShot.length; i++) assert.equal(dryMix[i+6000], dryShot[i]*0.5);
+// Summing into silence may turn -0 into +0; all other samples must match exactly.
+for (let i = 0; i < dryShot.length; i++) assert.ok(dryMix[i+6000] === dryShot[i]*0.5);
 additive.free();
 console.log('Additive WASM function exports passed.');
 
-// Frozen before the cinema redesign: every old default and saved v6 voice.
-const preCinema = JSON.parse(await readFile(new URL('../tests/fixtures/pre-cinema-bank.json', import.meta.url), 'utf8'));
-const preCinemaHashes = JSON.parse(await readFile(new URL('../tests/fixtures/pre-cinema-wasm.sha256.json', import.meta.url), 'utf8'));
-for (let i = 0; i < preCinema.length; i++) {
-  const pcm = render_recipe(JSON.stringify(preCinema[i]), 24000);
-  assert.equal(createHash('sha256').update(Buffer.from(pcm.buffer)).digest('hex'), preCinemaHashes[i].hash, preCinema[i].kind);
+// Original bank and the sole current space bank retain their exact audio.
+const originals = JSON.parse(await readFile(new URL('../tests/fixtures/original-bank.json', import.meta.url), 'utf8'));
+const originalHashes = JSON.parse(await readFile(new URL('../tests/fixtures/original-wasm.sha256.json', import.meta.url), 'utf8'));
+for (let i = 0; i < originals.length; i++) {
+  const pcm = render_recipe(JSON.stringify(originals[i]), 24000);
+  assert.equal(createHash('sha256').update(Buffer.from(pcm.buffer)).digest('hex'), originalHashes[i].hash, originals[i].kind);
 }
-console.log('All 41 original presets and 26 saved v6 recipes retain exact WASM PCM hashes.');
+const space = JSON.parse(await readFile(new URL('../tests/fixtures/space-bank.json', import.meta.url), 'utf8'));
+const spaceHashes = JSON.parse(await readFile(new URL('../tests/fixtures/space-wasm.sha256.json', import.meta.url), 'utf8'));
+const hash = pcm => createHash('sha256').update(Buffer.from(pcm.buffer)).digest('hex');
+assert.equal(space.length, 25);
+assert.equal(catalog.some(entry => entry.kind === 'tissue_wet'), false);
+for (const [i, recipe] of space.entries()) {
+  const json = JSON.stringify(recipe);
+  assert.equal(hash(render_recipe(json, 24000)), spaceHashes[i].wet, recipe.kind);
+  assert.equal(hash(render_with_options(json, 24000, '{"dry_mid":true}')), spaceHashes[i].dry, recipe.kind);
+  if (spaceHashes[i].loop) assert.equal(hash(render_loop(json, 24000, 2)), spaceHashes[i].loop, recipe.kind);
+  for (const version of [6, 7]) {
+    assert.equal(hash(render_recipe(JSON.stringify({...recipe, version}), 24000)), spaceHashes[i].wet, recipe.kind);
+  }
+}
+assert.throws(() => render_recipe(JSON.stringify({...space[0], kind: 'tissue_wet'}), 24000));
+console.log('Original 41 and latest 25 space voices retain exact WASM PCM hashes; space recipes load automatically and the removed kind is rejected.');

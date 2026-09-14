@@ -7,6 +7,7 @@ mod laser;
 mod natural;
 mod recipe;
 mod render;
+mod spatial;
 mod tools;
 #[cfg(target_arch = "wasm32")]
 mod wasm;

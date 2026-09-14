@@ -258,7 +258,7 @@ fn cinematic_scenes_round_trip_vary_and_stay_bounded_at_extreme_edits() {
                 .all(|x| x.is_finite() && x.abs() <= 0.890_001)
         );
         recipe.version = 3;
-        assert!(recipe.validate().is_err());
+        assert_eq!(recipe.validate().is_ok(), recipe.kind.is_space());
     }
 }
 

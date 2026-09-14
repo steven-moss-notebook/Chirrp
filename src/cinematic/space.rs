@@ -1,4 +1,4 @@
-//! Version-seven space voices. Broadband excitation, damped material modes,
+//! Space voices. Broadband excitation, damped material modes,
 //! coherent pressure gestures and continuously moving formants replace bleeps.
 //! Source layers run at 2x rate and are low-passed before decimation.
 use crate::{Recipe, SoundKind};
@@ -71,7 +71,6 @@ fn envelope(t: f32, attack: f32, hold: f32, tail: f32) -> f32 {
 enum Material {
     Steel,
     Crystal,
-    Flesh,
     Electrical,
     Stone,
 }
@@ -413,15 +412,6 @@ pub(super) fn dry(r: &Recipe, sr: u32) -> (Vec<f32>, Vec<f32>) {
             s.metal(0.028, 1.25, 148., 0.32, -0.22, Steel);
             s.metal(0.06, 0.7, 236., 0.14, 0.2, Steel);
         }
-        TissueWet => {
-            s.pressure(0.008, 0.06, 0.85, 44., 0.8);
-            s.air((0., 0.04, 0.1, 0.75), (50., 650.), 1.35, 0.);
-            for _ in 0..6 {
-                let at = rng.random_range(0.04..0.55);
-                s.metal(at, 0.09, rng.random_range(90.0..210.), 0.18, 0., Flesh);
-                s.air((at, 0.006, 0., 0.08), (180., 1100.), 0.28, 0.);
-            }
-        }
         ScrapCreature => {
             s.add(
                 Source::Throat {
@@ -576,7 +566,6 @@ impl Voice {
                 let ratio = (1. + i as f32).powf(match material {
                     Material::Steel => 1.13,
                     Material::Crystal => 1.26,
-                    Material::Flesh => 0.64,
                     Material::Electrical => 0.93,
                     Material::Stone => 1.4,
                 });
@@ -675,7 +664,6 @@ impl Voice {
                 let noise = exciter
                     * (-t
                         * match material {
-                            Material::Flesh => 35.,
                             Material::Stone => 32.,
                             _ => 120.,
                         })
@@ -1098,72 +1086,4 @@ pub(super) fn bed(r: &Recipe, sr: u32, frames: usize, continuous: bool) -> (Vec<
         side.push(s * env);
     }
     (mid, side)
-}
-
-struct Delay {
-    data: Vec<f32>,
-    pos: usize,
-    damping: Lowpass,
-}
-impl Delay {
-    fn new(seconds: f32, sr: u32) -> Self {
-        Self {
-            data: vec![0.; (seconds * sr as f32).round() as usize],
-            pos: 0,
-            damping: Lowpass::new(2900., sr as f32),
-        }
-    }
-    fn read(&self) -> f32 {
-        self.data[self.pos]
-    }
-    fn push(&mut self, x: f32) {
-        self.data[self.pos] = x;
-        self.pos = (self.pos + 1) % self.data.len();
-    }
-    fn diffuse(&mut self, x: f32) -> f32 {
-        let y = self.read() - x * 0.6;
-        self.push(x + y * 0.6);
-        y
-    }
-}
-/// Eight-line Householder room with predelay and four input diffusers.
-/// Only version-seven space recipes use it; low bass stays in the direct mid.
-pub(crate) struct Room {
-    lines: [Delay; 8],
-    diffusion: [Delay; 4],
-    pre: Delay,
-    feedback: [f32; 8],
-    low: Lowpass,
-}
-impl Room {
-    pub(crate) fn new(sr: u32, amount: f32) -> Self {
-        let times = [
-            0.0437, 0.0533, 0.0613, 0.0719, 0.0839, 0.0973, 0.1097, 0.1279,
-        ];
-        let rt60 = 0.45 + amount * 3.2;
-        Self {
-            lines: times.map(|t| Delay::new(t, sr)),
-            diffusion: [0.0073, 0.0137, 0.0229, 0.0331].map(|t| Delay::new(t, sr)),
-            pre: Delay::new(0.0211, sr),
-            feedback: times.map(|t| 0.001f32.powf(t / rt60)),
-            low: Lowpass::new(160., sr as f32),
-        }
-    }
-    pub(crate) fn tick(&mut self, input: f32) -> (f32, f32) {
-        let high = input - self.low.tick(input);
-        let mut x = self.pre.read();
-        self.pre.push(high);
-        for d in &mut self.diffusion {
-            x = d.diffuse(x);
-        }
-        let reads = self.lines.each_ref().map(|d| d.read());
-        let sum = reads.iter().sum::<f32>();
-        for (j, read) in reads.iter().enumerate() {
-            let v = self.lines[j].damping.tick(*read - sum * 0.25);
-            self.lines[j].push(x * 0.22 + v * self.feedback[j]);
-        }
-        let left = (reads[0] + reads[2] - reads[4] - reads[6]) * 0.5;
-        let right = (reads[1] + reads[3] - reads[5] - reads[7]) * 0.5;
-        ((left + right) * 0.5, (left - right) * 0.5)
-    }
 }

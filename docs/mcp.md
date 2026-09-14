@@ -194,5 +194,8 @@ mono downmix before PCM16 quantization.
 The example above is a `generate_loop` call. For custom sustain/long decay, edit a
 bed recipe returned by `get_recipe` and pass it to `render_sound`; the old
 `edit_sound` tool schema retains its original controls and bounds. `generate_loop`
-also accepts `sustain_level` directly. See [space-bank.md](space-bank.md) for kinds
-and mix-only game cues.
+also accepts `sustain_level` directly. The 25 space kinds each have one current
+design with the [theater field](sound-design.md#space-theater-field). Obtain a
+recipe with `create_sound` / `get_recipe`; do not choose space version numbers.
+Space recipes load automatically into the current design while retaining their
+seed and controls. Existing tool arguments and export options are unchanged.

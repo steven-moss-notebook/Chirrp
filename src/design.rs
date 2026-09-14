@@ -160,7 +160,7 @@ pub(super) fn bake_voice(v: Voice, recipe: &Recipe, sr: u32) -> Result<Vec<f32>>
 /// a hover can never be normalized into a loud notification.
 pub(crate) fn mastering(recipe: &Recipe) -> (f32, f32) {
     use SoundKind::*;
-    if recipe.version >= 7 && recipe.kind.is_space() {
+    if recipe.kind.is_space() {
         return match recipe.kind {
             HeavySlug | AnvilPulse | ExpandingRing => (1.35, 0.89),
             RocketLaunch | BeamIgnite => (1.25, 0.87),
@@ -175,12 +175,6 @@ pub(crate) fn mastering(recipe: &Recipe) -> (f32, f32) {
         };
     }
     match recipe.kind {
-        HullRumble | GravityDrone => (1.4, 0.48),
-        BeamLoop | VacuumLoop | MagnetPulse | FurnaceBed => (1.3, 0.55),
-        NaniteHiss => (1., 0.24),
-        ChoirInterval => (1.25, 0.46),
-        HeavySlug | AnvilPulse => (1.6, 0.89),
-        WeakPoint | SirenLock => (1.1, 0.48),
         Wind if recipe.version >= 5 => (0.8, 0.18),
         Leaves if recipe.version >= 5 => (1.1, 0.3),
         Rustling if recipe.version >= 5 => (1.2, 0.4),
